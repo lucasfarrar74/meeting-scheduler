@@ -1,9 +1,15 @@
-export interface Supplier {
-  id: string;
+export interface ContactPerson {
   name: string;
-  organization: string;
   email?: string;
   phone?: string;
+  title?: string;
+}
+
+export interface Supplier {
+  id: string;
+  companyName: string;           // PRIMARY FIELD (required)
+  primaryContact: ContactPerson; // Main representative
+  secondaryContact?: ContactPerson; // Optional second person
   tableNumber?: number;
   meetingDuration: number; // in minutes
   preference: PreferenceType;
@@ -55,12 +61,19 @@ export interface EventConfig {
   breaks: Break[];
 }
 
+export interface UnscheduledPair {
+  supplierId: string;
+  buyerId: string;
+}
+
 export interface ScheduleState {
   eventConfig: EventConfig | null;
   suppliers: Supplier[];
   buyers: Buyer[];
   meetings: Meeting[];
   timeSlots: TimeSlot[];
+  unscheduledPairs: UnscheduledPair[];
+  isGenerating: boolean;
 }
 
 export interface ScheduleContextType extends ScheduleState {
@@ -82,4 +95,43 @@ export interface ScheduleContextType extends ScheduleState {
   clearSchedule: () => void;
   exportToJSON: () => string;
   importFromJSON: (json: string) => void;
+}
+
+// Helper to migrate old supplier format to new
+export interface LegacySupplier {
+  id: string;
+  name: string;
+  organization: string;
+  email?: string;
+  phone?: string;
+  tableNumber?: number;
+  meetingDuration: number;
+  preference: PreferenceType;
+  preferenceList: string[];
+}
+
+export function migrateSupplier(legacy: LegacySupplier): Supplier {
+  return {
+    id: legacy.id,
+    companyName: legacy.organization || legacy.name,
+    primaryContact: {
+      name: legacy.name,
+      email: legacy.email,
+      phone: legacy.phone,
+    },
+    tableNumber: legacy.tableNumber,
+    meetingDuration: legacy.meetingDuration,
+    preference: legacy.preference,
+    preferenceList: legacy.preferenceList,
+  };
+}
+
+export function isLegacySupplier(obj: unknown): obj is LegacySupplier {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'name' in obj &&
+    'organization' in obj &&
+    !('companyName' in obj)
+  );
 }

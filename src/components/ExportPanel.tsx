@@ -40,8 +40,15 @@ export default function ExportPanel() {
       }
 
       doc.setFontSize(14);
-      doc.text(`${supplier.name} (${supplier.organization})`, 14, y);
-      y += 8;
+      doc.text(supplier.companyName, 14, y);
+      y += 6;
+      doc.setFontSize(9);
+      doc.text(`Contact: ${supplier.primaryContact.name}${supplier.primaryContact.email ? ` (${supplier.primaryContact.email})` : ''}`, 14, y);
+      if (supplier.secondaryContact) {
+        y += 4;
+        doc.text(`Secondary: ${supplier.secondaryContact.name}${supplier.secondaryContact.email ? ` (${supplier.secondaryContact.email})` : ''}`, 14, y);
+      }
+      y += 6;
 
       doc.setFontSize(10);
       const supplierMeetings = activeMeetings.filter(m => m.supplierId === supplier.id);
@@ -87,7 +94,7 @@ export default function ExportPanel() {
       meetingSlots.forEach(slot => {
         const meeting = buyerMeetings.find(m => m.timeSlotId === slot.id);
         const supplier = meeting ? getSupplier(meeting.supplierId) : null;
-        doc.text(`${formatTime(slot.startTime)}: ${supplier?.name || '-'}`, 20, y);
+        doc.text(`${formatTime(slot.startTime)}: ${supplier?.companyName || '-'}`, 20, y);
         y += 5;
       });
 
@@ -113,7 +120,7 @@ export default function ExportPanel() {
     const colWidth = (280 - 30) / suppliers.length;
     doc.text('Time', 14, y);
     suppliers.forEach((s, i) => {
-      doc.text(s.name.substring(0, 12), 35 + i * colWidth, y);
+      doc.text(s.companyName.substring(0, 12), 35 + i * colWidth, y);
     });
     y += 5;
 
@@ -143,7 +150,7 @@ export default function ExportPanel() {
 
     // Master grid sheet
     const gridData = [
-      ['Time', ...suppliers.map(s => s.name)],
+      ['Time', ...suppliers.map(s => s.companyName)],
       ...meetingSlots.map(slot => [
         formatTime(slot.startTime),
         ...suppliers.map(supplier => {
@@ -161,7 +168,7 @@ export default function ExportPanel() {
     const supplierData = suppliers.map(supplier => {
       const supplierMeetings = activeMeetings.filter(m => m.supplierId === supplier.id);
       return [
-        supplier.name,
+        supplier.companyName,
         ...meetingSlots.map(slot => {
           const meeting = supplierMeetings.find(m => m.timeSlotId === slot.id);
           return meeting ? getBuyer(meeting.buyerId)?.name || '' : '';
@@ -181,7 +188,7 @@ export default function ExportPanel() {
         buyer.name,
         ...meetingSlots.map(slot => {
           const meeting = buyerMeetings.find(m => m.timeSlotId === slot.id);
-          return meeting ? getSupplier(meeting.supplierId)?.name || '' : '';
+          return meeting ? getSupplier(meeting.supplierId)?.companyName || '' : '';
         }),
       ];
     });
@@ -194,9 +201,14 @@ export default function ExportPanel() {
     // All meetings list
     const meetingsList = activeMeetings.map(m => {
       const slot = getSlot(m.timeSlotId);
+      const supplier = getSupplier(m.supplierId);
       return {
         Time: slot ? formatTime(slot.startTime) : '',
-        Supplier: getSupplier(m.supplierId)?.name || '',
+        Supplier: supplier?.companyName || '',
+        'Primary Contact': supplier?.primaryContact.name || '',
+        'Primary Email': supplier?.primaryContact.email || '',
+        'Secondary Contact': supplier?.secondaryContact?.name || '',
+        'Secondary Email': supplier?.secondaryContact?.email || '',
         Buyer: getBuyer(m.buyerId)?.name || '',
         Status: m.status,
       };

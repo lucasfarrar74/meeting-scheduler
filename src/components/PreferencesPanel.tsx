@@ -68,7 +68,7 @@ export default function PreferencesPanel() {
                   : 'hover:bg-gray-100'
               }`}
             >
-              <div className="font-medium">{supplier.name}</div>
+              <div className="font-medium">{supplier.companyName}</div>
               <div className="text-xs text-gray-500">
                 {supplier.preference === 'all' && 'Meeting everyone'}
                 {supplier.preference === 'include' &&
@@ -85,7 +85,7 @@ export default function PreferencesPanel() {
         {currentSupplier ? (
           <>
             <h2 className="text-lg font-semibold mb-4">
-              Preferences for {currentSupplier.name}
+              Preferences for {currentSupplier.companyName}
             </h2>
 
             <div className="mb-6">

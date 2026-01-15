@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useMemo, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type {
@@ -9,6 +9,7 @@ import type {
   Buyer,
   MeetingStatus,
 } from '../types';
+import { isLegacySupplier, migrateSupplier } from '../types';
 import { generateSchedule, autoFillCancelledSlots } from '../utils/scheduler';
 
 const initialState: ScheduleState = {
@@ -17,91 +18,123 @@ const initialState: ScheduleState = {
   buyers: [],
   meetings: [],
   timeSlots: [],
+  unscheduledPairs: [],
+  isGenerating: false,
 };
+
+// Migration function for old data format
+function migrateState(data: unknown): ScheduleState {
+  if (!data || typeof data !== 'object') return initialState;
+
+  const state = data as ScheduleState;
+
+  // Migrate suppliers if they're in the old format
+  if (state.suppliers && state.suppliers.length > 0) {
+    const firstSupplier = state.suppliers[0];
+    if (isLegacySupplier(firstSupplier)) {
+      state.suppliers = state.suppliers.map(s => migrateSupplier(s as unknown as Parameters<typeof migrateSupplier>[0]));
+    }
+  }
+
+  // Restore Date objects from strings for timeSlots
+  if (state.timeSlots) {
+    state.timeSlots = state.timeSlots.map(slot => ({
+      ...slot,
+      startTime: new Date(slot.startTime),
+      endTime: new Date(slot.endTime),
+    }));
+  }
+
+  return state;
+}
 
 const ScheduleContext = createContext<ScheduleContextType | undefined>(undefined);
 
 export function ScheduleProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useLocalStorage<ScheduleState>('meeting-scheduler-state', initialState);
+  const [state, setState] = useLocalStorage<ScheduleState>('meeting-scheduler-state', initialState, migrateState);
 
-  const setEventConfig = (config: EventConfig) => {
+  const setEventConfig = useCallback((config: EventConfig) => {
     setState(prev => ({ ...prev, eventConfig: config, meetings: [], timeSlots: [] }));
-  };
+  }, [setState]);
 
-  const addSupplier = (supplier: Supplier) => {
+  const addSupplier = useCallback((supplier: Supplier) => {
     setState(prev => ({ ...prev, suppliers: [...prev.suppliers, supplier] }));
-  };
+  }, [setState]);
 
-  const updateSupplier = (id: string, updates: Partial<Supplier>) => {
+  const updateSupplier = useCallback((id: string, updates: Partial<Supplier>) => {
     setState(prev => ({
       ...prev,
       suppliers: prev.suppliers.map(s => (s.id === id ? { ...s, ...updates } : s)),
     }));
-  };
+  }, [setState]);
 
-  const removeSupplier = (id: string) => {
+  const removeSupplier = useCallback((id: string) => {
     setState(prev => ({
       ...prev,
       suppliers: prev.suppliers.filter(s => s.id !== id),
       meetings: prev.meetings.filter(m => m.supplierId !== id),
     }));
-  };
+  }, [setState]);
 
-  const addBuyer = (buyer: Buyer) => {
+  const addBuyer = useCallback((buyer: Buyer) => {
     setState(prev => ({ ...prev, buyers: [...prev.buyers, buyer] }));
-  };
+  }, [setState]);
 
-  const updateBuyer = (id: string, updates: Partial<Buyer>) => {
+  const updateBuyer = useCallback((id: string, updates: Partial<Buyer>) => {
     setState(prev => ({
       ...prev,
       buyers: prev.buyers.map(b => (b.id === id ? { ...b, ...updates } : b)),
     }));
-  };
+  }, [setState]);
 
-  const removeBuyer = (id: string) => {
+  const removeBuyer = useCallback((id: string) => {
     setState(prev => ({
       ...prev,
       buyers: prev.buyers.filter(b => b.id !== id),
       meetings: prev.meetings.filter(m => m.buyerId !== id),
-      // Also remove from supplier preference lists
       suppliers: prev.suppliers.map(s => ({
         ...s,
         preferenceList: s.preferenceList.filter(bid => bid !== id),
       })),
     }));
-  };
+  }, [setState]);
 
-  const importSuppliers = (suppliers: Supplier[]) => {
+  const importSuppliers = useCallback((suppliers: Supplier[]) => {
     setState(prev => ({ ...prev, suppliers, meetings: [], timeSlots: [] }));
-  };
+  }, [setState]);
 
-  const importBuyers = (buyers: Buyer[]) => {
+  const importBuyers = useCallback((buyers: Buyer[]) => {
     setState(prev => ({ ...prev, buyers, meetings: [], timeSlots: [] }));
-  };
+  }, [setState]);
 
-  const generateScheduleAction = () => {
-    if (!state.eventConfig) return;
+  const generateScheduleAction = useCallback(() => {
+    // Set generating state
+    setState(prev => ({ ...prev, isGenerating: true }));
 
-    const result = generateSchedule(state.eventConfig, state.suppliers, state.buyers);
-    setState(prev => ({
-      ...prev,
-      meetings: result.meetings,
-      timeSlots: result.timeSlots,
-    }));
+    // Use setTimeout to allow UI to update before heavy computation
+    setTimeout(() => {
+      setState(prev => {
+        if (!prev.eventConfig) return { ...prev, isGenerating: false };
+        const result = generateSchedule(prev.eventConfig, prev.suppliers, prev.buyers);
+        return {
+          ...prev,
+          meetings: result.meetings,
+          timeSlots: result.timeSlots,
+          unscheduledPairs: result.unscheduledPairs,
+          isGenerating: false,
+        };
+      });
+    }, 50);
+  }, [setState]);
 
-    if (result.unscheduledPairs.length > 0) {
-      console.warn('Some meetings could not be scheduled:', result.unscheduledPairs.length);
-    }
-  };
-
-  const updateMeetingStatus = (meetingId: string, status: MeetingStatus) => {
+  const updateMeetingStatus = useCallback((meetingId: string, status: MeetingStatus) => {
     setState(prev => ({
       ...prev,
       meetings: prev.meetings.map(m => (m.id === meetingId ? { ...m, status } : m)),
     }));
-  };
+  }, [setState]);
 
-  const swapMeetings = (meetingId1: string, meetingId2: string) => {
+  const swapMeetings = useCallback((meetingId1: string, meetingId2: string) => {
     setState(prev => {
       const meeting1 = prev.meetings.find(m => m.id === meetingId1);
       const meeting2 = prev.meetings.find(m => m.id === meetingId2);
@@ -116,40 +149,42 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
         }),
       };
     });
-  };
+  }, [setState]);
 
-  const moveMeeting = (meetingId: string, newTimeSlotId: string) => {
+  const moveMeeting = useCallback((meetingId: string, newTimeSlotId: string) => {
     setState(prev => ({
       ...prev,
       meetings: prev.meetings.map(m =>
         m.id === meetingId ? { ...m, timeSlotId: newTimeSlotId } : m
       ),
     }));
-  };
+  }, [setState]);
 
-  const cancelMeeting = (meetingId: string) => {
-    updateMeetingStatus(meetingId, 'cancelled');
-  };
+  const cancelMeeting = useCallback((meetingId: string) => {
+    setState(prev => ({
+      ...prev,
+      meetings: prev.meetings.map(m => (m.id === meetingId ? { ...m, status: 'cancelled' as const } : m)),
+    }));
+  }, [setState]);
 
-  const autoFillGaps = () => {
+  const autoFillGaps = useCallback(() => {
     setState(prev => ({
       ...prev,
       meetings: autoFillCancelledSlots(prev.suppliers, prev.buyers, prev.timeSlots, prev.meetings),
     }));
-  };
+  }, [setState]);
 
-  const clearSchedule = () => {
-    setState(prev => ({ ...prev, meetings: [], timeSlots: [] }));
-  };
+  const clearSchedule = useCallback(() => {
+    setState(prev => ({ ...prev, meetings: [], timeSlots: [], unscheduledPairs: [] }));
+  }, [setState]);
 
-  const exportToJSON = (): string => {
+  const exportToJSON = useCallback((): string => {
     return JSON.stringify(state, null, 2);
-  };
+  }, [state]);
 
-  const importFromJSON = (json: string) => {
+  const importFromJSON = useCallback((json: string) => {
     try {
       const parsed = JSON.parse(json) as ScheduleState;
-      // Restore Date objects from strings
       if (parsed.timeSlots) {
         parsed.timeSlots = parsed.timeSlots.map(slot => ({
           ...slot,
@@ -162,9 +197,9 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
       console.error('Failed to import JSON:', error);
       throw new Error('Invalid JSON format');
     }
-  };
+  }, [setState]);
 
-  const value: ScheduleContextType = {
+  const value = useMemo<ScheduleContextType>(() => ({
     ...state,
     setEventConfig,
     addSupplier,
@@ -184,7 +219,27 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     clearSchedule,
     exportToJSON,
     importFromJSON,
-  };
+  }), [
+    state,
+    setEventConfig,
+    addSupplier,
+    updateSupplier,
+    removeSupplier,
+    addBuyer,
+    updateBuyer,
+    removeBuyer,
+    importSuppliers,
+    importBuyers,
+    generateScheduleAction,
+    updateMeetingStatus,
+    swapMeetings,
+    moveMeeting,
+    cancelMeeting,
+    autoFillGaps,
+    clearSchedule,
+    exportToJSON,
+    importFromJSON,
+  ]);
 
   return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
 }
