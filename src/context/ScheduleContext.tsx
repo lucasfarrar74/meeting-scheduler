@@ -8,6 +8,9 @@ import type {
   Supplier,
   Buyer,
   MeetingStatus,
+  Meeting,
+  TimeSlot,
+  UnscheduledPair,
 } from '../types';
 import { isLegacySupplier, migrateSupplier } from '../types';
 import { generateSchedule, autoFillCancelledSlots } from '../utils/scheduler';
@@ -26,18 +29,32 @@ const initialState: ScheduleState = {
 function migrateState(data: unknown): ScheduleState {
   if (!data || typeof data !== 'object') return initialState;
 
-  const state = data as ScheduleState;
+  const rawData = data as Record<string, unknown>;
+
+  // Start with initial state defaults, then overlay loaded data
+  const state: ScheduleState = {
+    ...initialState,
+    eventConfig: (rawData.eventConfig as EventConfig | null) ?? null,
+    suppliers: (rawData.suppliers as Supplier[]) ?? [],
+    buyers: (rawData.buyers as Buyer[]) ?? [],
+    meetings: (rawData.meetings as Meeting[]) ?? [],
+    timeSlots: (rawData.timeSlots as TimeSlot[]) ?? [],
+    unscheduledPairs: (rawData.unscheduledPairs as UnscheduledPair[]) ?? [],
+    isGenerating: false, // Always reset to false on load
+  };
 
   // Migrate suppliers if they're in the old format
-  if (state.suppliers && state.suppliers.length > 0) {
+  if (state.suppliers.length > 0) {
     const firstSupplier = state.suppliers[0];
     if (isLegacySupplier(firstSupplier)) {
-      state.suppliers = state.suppliers.map(s => migrateSupplier(s as unknown as Parameters<typeof migrateSupplier>[0]));
+      state.suppliers = state.suppliers.map(s =>
+        migrateSupplier(s as unknown as Parameters<typeof migrateSupplier>[0])
+      );
     }
   }
 
   // Restore Date objects from strings for timeSlots
-  if (state.timeSlots) {
+  if (state.timeSlots.length > 0) {
     state.timeSlots = state.timeSlots.map(slot => ({
       ...slot,
       startTime: new Date(slot.startTime),
@@ -115,14 +132,20 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     setTimeout(() => {
       setState(prev => {
         if (!prev.eventConfig) return { ...prev, isGenerating: false };
-        const result = generateSchedule(prev.eventConfig, prev.suppliers, prev.buyers);
-        return {
-          ...prev,
-          meetings: result.meetings,
-          timeSlots: result.timeSlots,
-          unscheduledPairs: result.unscheduledPairs,
-          isGenerating: false,
-        };
+
+        try {
+          const result = generateSchedule(prev.eventConfig, prev.suppliers, prev.buyers);
+          return {
+            ...prev,
+            meetings: result.meetings,
+            timeSlots: result.timeSlots,
+            unscheduledPairs: result.unscheduledPairs,
+            isGenerating: false,
+          };
+        } catch (error) {
+          console.error('Schedule generation failed:', error);
+          return { ...prev, isGenerating: false };
+        }
       });
     }, 50);
   }, [setState]);
