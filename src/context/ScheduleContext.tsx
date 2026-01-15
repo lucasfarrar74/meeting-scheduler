@@ -13,7 +13,8 @@ import type {
   UnscheduledPair,
 } from '../types';
 import { isLegacySupplier, migrateSupplier } from '../types';
-import { generateSchedule, autoFillCancelledSlots } from '../utils/scheduler';
+import { autoFillCancelledSlots } from '../utils/scheduler';
+import { generateScheduleAsync } from '../utils/schedulerAsync';
 
 const initialState: ScheduleState = {
   eventConfig: null,
@@ -124,31 +125,34 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     setState(prev => ({ ...prev, buyers, meetings: [], timeSlots: [] }));
   }, [setState]);
 
-  const generateScheduleAction = useCallback(() => {
+  const generateScheduleAction = useCallback(async () => {
+    // Get current state for the async operation
+    const currentState = state;
+    if (!currentState.eventConfig) return;
+
     // Set generating state
     setState(prev => ({ ...prev, isGenerating: true }));
 
-    // Use setTimeout to allow UI to update before heavy computation
-    setTimeout(() => {
-      setState(prev => {
-        if (!prev.eventConfig) return { ...prev, isGenerating: false };
+    try {
+      // Use async scheduler that yields to browser periodically
+      const result = await generateScheduleAsync(
+        currentState.eventConfig,
+        currentState.suppliers,
+        currentState.buyers
+      );
 
-        try {
-          const result = generateSchedule(prev.eventConfig, prev.suppliers, prev.buyers);
-          return {
-            ...prev,
-            meetings: result.meetings,
-            timeSlots: result.timeSlots,
-            unscheduledPairs: result.unscheduledPairs,
-            isGenerating: false,
-          };
-        } catch (error) {
-          console.error('Schedule generation failed:', error);
-          return { ...prev, isGenerating: false };
-        }
-      });
-    }, 50);
-  }, [setState]);
+      setState(prev => ({
+        ...prev,
+        meetings: result.meetings,
+        timeSlots: result.timeSlots,
+        unscheduledPairs: result.unscheduledPairs,
+        isGenerating: false,
+      }));
+    } catch (error) {
+      console.error('Schedule generation failed:', error);
+      setState(prev => ({ ...prev, isGenerating: false }));
+    }
+  }, [state, setState]);
 
   const updateMeetingStatus = useCallback((meetingId: string, status: MeetingStatus) => {
     setState(prev => ({
