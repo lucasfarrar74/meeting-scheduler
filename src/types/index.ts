@@ -95,6 +95,7 @@ export interface ScheduleContextType extends ScheduleState {
   clearSchedule: () => void;
   exportToJSON: () => string;
   importFromJSON: (json: string) => void;
+  resetAllData: () => void;
 }
 
 // Helper to migrate old supplier format to new

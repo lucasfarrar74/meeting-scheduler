@@ -12,6 +12,7 @@ export default function ExportPanel() {
     timeSlots,
     exportToJSON,
     importFromJSON,
+    resetAllData,
   } = useSchedule();
 
   const getBuyer = (id: string) => buyers.find(b => b.id === id);
@@ -325,6 +326,24 @@ export default function ExportPanel() {
           You can also print directly from the Schedule tab. Use your browser's print function
           (Ctrl+P / Cmd+P) - the navigation will be hidden automatically.
         </p>
+      </div>
+
+      <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-red-900 mb-2">Reset All Data</h2>
+        <p className="text-sm text-red-700 mb-4">
+          This will permanently delete all suppliers, buyers, preferences, and schedules.
+          Consider exporting a backup first.
+        </p>
+        <button
+          onClick={() => {
+            if (window.confirm('Are you sure you want to delete ALL data? This cannot be undone.')) {
+              resetAllData();
+            }
+          }}
+          className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+        >
+          Reset All Data
+        </button>
       </div>
     </div>
   );

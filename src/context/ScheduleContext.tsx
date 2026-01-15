@@ -222,6 +222,10 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     }
   }, [setState]);
 
+  const resetAllData = useCallback(() => {
+    setState(initialState);
+  }, [setState]);
+
   const value = useMemo<ScheduleContextType>(() => ({
     ...state,
     setEventConfig,
@@ -242,6 +246,7 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     clearSchedule,
     exportToJSON,
     importFromJSON,
+    resetAllData,
   }), [
     state,
     setEventConfig,
@@ -262,6 +267,7 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     clearSchedule,
     exportToJSON,
     importFromJSON,
+    resetAllData,
   ]);
 
   return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
