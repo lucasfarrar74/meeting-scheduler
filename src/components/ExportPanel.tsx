@@ -252,55 +252,55 @@ export default function ExportPanel() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold mb-4">Export Schedule</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Export Schedule</h2>
 
         {!hasSchedule ? (
-          <p className="text-gray-500">Generate a schedule first to enable exports.</p>
+          <p className="text-gray-500 dark:text-gray-400">Generate a schedule first to enable exports.</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <button
               onClick={exportSupplierPDF}
-              className="p-4 border-2 border-dashed rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors"
+              className="p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
             >
               <div className="text-2xl mb-2">📄</div>
-              <div className="font-medium">Supplier Schedules</div>
-              <div className="text-sm text-gray-500">PDF by supplier</div>
+              <div className="font-medium text-gray-900 dark:text-gray-100">Supplier Schedules</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400">PDF by supplier</div>
             </button>
 
             <button
               onClick={exportBuyerPDF}
-              className="p-4 border-2 border-dashed rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors"
+              className="p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
             >
               <div className="text-2xl mb-2">📄</div>
-              <div className="font-medium">Buyer Schedules</div>
-              <div className="text-sm text-gray-500">PDF by buyer</div>
+              <div className="font-medium text-gray-900 dark:text-gray-100">Buyer Schedules</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400">PDF by buyer</div>
             </button>
 
             <button
               onClick={exportMasterPDF}
-              className="p-4 border-2 border-dashed rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors"
+              className="p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
             >
               <div className="text-2xl mb-2">📊</div>
-              <div className="font-medium">Master Grid</div>
-              <div className="text-sm text-gray-500">PDF overview</div>
+              <div className="font-medium text-gray-900 dark:text-gray-100">Master Grid</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400">PDF overview</div>
             </button>
 
             <button
               onClick={exportExcel}
-              className="p-4 border-2 border-dashed rounded-lg hover:border-green-500 hover:bg-green-50 transition-colors"
+              className="p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-green-500 dark:hover:border-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 transition-colors"
             >
               <div className="text-2xl mb-2">📗</div>
-              <div className="font-medium">Excel Export</div>
-              <div className="text-sm text-gray-500">All data in .xlsx</div>
+              <div className="font-medium text-gray-900 dark:text-gray-100">Excel Export</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400">All data in .xlsx</div>
             </button>
           </div>
         )}
       </div>
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold mb-4">Backup & Restore</h2>
-        <p className="text-sm text-gray-600 mb-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Backup & Restore</h2>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
           Export your entire configuration (suppliers, buyers, preferences, schedule) as a JSON
           file. Use this to transfer data between devices or keep a backup.
         </p>
@@ -308,29 +308,29 @@ export default function ExportPanel() {
         <div className="flex gap-4">
           <button
             onClick={handleExportJSON}
-            className="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200"
+            className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600"
           >
             Export Backup (JSON)
           </button>
 
-          <label className="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200 cursor-pointer">
+          <label className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer">
             Import Backup
             <input type="file" accept=".json" onChange={handleImportJSON} className="hidden" />
           </label>
         </div>
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-        <h3 className="font-medium text-blue-900 mb-2">Print Tip</h3>
-        <p className="text-blue-800 text-sm">
+      <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md p-4">
+        <h3 className="font-medium text-blue-900 dark:text-blue-300 mb-2">Print Tip</h3>
+        <p className="text-blue-800 dark:text-blue-400 text-sm">
           You can also print directly from the Schedule tab. Use your browser's print function
           (Ctrl+P / Cmd+P) - the navigation will be hidden automatically.
         </p>
       </div>
 
-      <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-        <h2 className="text-lg font-semibold text-red-900 mb-2">Reset All Data</h2>
-        <p className="text-sm text-red-700 mb-4">
+      <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-red-900 dark:text-red-300 mb-2">Reset All Data</h2>
+        <p className="text-sm text-red-700 dark:text-red-400 mb-4">
           This will permanently delete all suppliers, buyers, preferences, and schedules.
           Consider exporting a backup first.
         </p>
@@ -340,7 +340,7 @@ export default function ExportPanel() {
               resetAllData();
             }
           }}
-          className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+          className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-md hover:bg-red-700 dark:hover:bg-red-600"
         >
           Reset All Data
         </button>

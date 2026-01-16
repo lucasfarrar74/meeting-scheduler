@@ -1,5 +1,5 @@
 import type { TimeSlot, EventConfig } from '../types';
-import { parse, format, addMinutes, isWithinInterval, isBefore, isAfter } from 'date-fns';
+import { parse, format, addMinutes, isBefore, isAfter } from 'date-fns';
 
 export function generateId(): string {
   return Math.random().toString(36).substring(2, 11);
@@ -30,12 +30,14 @@ export function generateTimeSlots(config: EventConfig): TimeSlot[] {
   );
 
   while (isBefore(currentTime, endTime)) {
-    // Check if current time falls within a break
+    // Check if current time falls within a break (exclusive of end time to avoid infinite loop)
     const activeBreak = sortedBreaks.find(brk => {
       const breakStart = parseTimeString(eventDate, brk.startTime);
       const breakEnd = parseTimeString(eventDate, brk.endTime);
-      return isWithinInterval(currentTime, { start: breakStart, end: breakEnd }) ||
-             (isBefore(currentTime, breakEnd) && isAfter(addMinutes(currentTime, config.defaultMeetingDuration), breakStart));
+      // Use isBefore for end check to exclude the endpoint (avoids infinite loop at break end)
+      const withinBreak = !isBefore(currentTime, breakStart) && isBefore(currentTime, breakEnd);
+      const wouldOverlapBreak = isBefore(currentTime, breakStart) && isAfter(addMinutes(currentTime, config.defaultMeetingDuration), breakStart);
+      return withinBreak || wouldOverlapBreak;
     });
 
     if (activeBreak) {

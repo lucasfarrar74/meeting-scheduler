@@ -35,8 +35,8 @@ export default function PreferencesPanel() {
 
   if (suppliers.length === 0) {
     return (
-      <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-        <p className="text-yellow-800">
+      <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-md p-4">
+        <p className="text-yellow-800 dark:text-yellow-300">
           Please add suppliers in the "Participants" tab first.
         </p>
       </div>
@@ -45,8 +45,8 @@ export default function PreferencesPanel() {
 
   if (buyers.length === 0) {
     return (
-      <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-        <p className="text-yellow-800">
+      <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-md p-4">
+        <p className="text-yellow-800 dark:text-yellow-300">
           Please add buyers in the "Participants" tab first.
         </p>
       </div>
@@ -55,8 +55,8 @@ export default function PreferencesPanel() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="bg-white rounded-lg shadow p-4">
-        <h2 className="text-lg font-semibold mb-4">Suppliers</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-4">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Suppliers</h2>
         <div className="space-y-1 max-h-96 overflow-y-auto">
           {suppliers.map(supplier => (
             <button
@@ -64,12 +64,12 @@ export default function PreferencesPanel() {
               onClick={() => setSelectedSupplier(supplier.id)}
               className={`w-full text-left px-3 py-2 rounded-md text-sm ${
                 selectedSupplier === supplier.id
-                  ? 'bg-blue-100 text-blue-800'
-                  : 'hover:bg-gray-100'
+                  ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300'
+                  : 'text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700'
               }`}
             >
               <div className="font-medium">{supplier.companyName}</div>
-              <div className="text-xs text-gray-500">
+              <div className="text-xs text-gray-500 dark:text-gray-400">
                 {supplier.preference === 'all' && 'Meeting everyone'}
                 {supplier.preference === 'include' &&
                   `Include list (${supplier.preferenceList.length})`}
@@ -81,19 +81,19 @@ export default function PreferencesPanel() {
         </div>
       </div>
 
-      <div className="lg:col-span-2 bg-white rounded-lg shadow p-4">
+      <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-4">
         {currentSupplier ? (
           <>
-            <h2 className="text-lg font-semibold mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
               Preferences for {currentSupplier.companyName}
             </h2>
 
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Meeting Preference
               </label>
               <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex items-center gap-2 cursor-pointer text-gray-900 dark:text-gray-100">
                   <input
                     type="radio"
                     name="preference"
@@ -103,7 +103,7 @@ export default function PreferencesPanel() {
                   />
                   <span>Meet everyone</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex items-center gap-2 cursor-pointer text-gray-900 dark:text-gray-100">
                   <input
                     type="radio"
                     name="preference"
@@ -113,7 +113,7 @@ export default function PreferencesPanel() {
                   />
                   <span>Meet only selected buyers</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex items-center gap-2 cursor-pointer text-gray-900 dark:text-gray-100">
                   <input
                     type="radio"
                     name="preference"
@@ -129,7 +129,7 @@ export default function PreferencesPanel() {
             {currentSupplier.preference !== 'all' && (
               <div>
                 <div className="flex justify-between items-center mb-2">
-                  <label className="block text-sm font-medium text-gray-700">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                     {currentSupplier.preference === 'include'
                       ? 'Select buyers to meet:'
                       : 'Select buyers to exclude:'}
@@ -137,24 +137,24 @@ export default function PreferencesPanel() {
                   <div className="space-x-2">
                     <button
                       onClick={selectAllBuyers}
-                      className="text-sm text-blue-500 hover:text-blue-700"
+                      className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
                     >
                       Select All
                     </button>
                     <button
                       onClick={clearAllBuyers}
-                      className="text-sm text-gray-500 hover:text-gray-700"
+                      className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                     >
                       Clear
                     </button>
                   </div>
                 </div>
 
-                <div className="border rounded-md max-h-64 overflow-y-auto">
+                <div className="border border-gray-200 dark:border-gray-700 rounded-md max-h-64 overflow-y-auto">
                   {buyers.map(buyer => (
                     <label
                       key={buyer.id}
-                      className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b last:border-b-0"
+                      className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer border-b border-gray-200 dark:border-gray-700 last:border-b-0"
                     >
                       <input
                         type="checkbox"
@@ -162,20 +162,20 @@ export default function PreferencesPanel() {
                         onChange={() => toggleBuyerInList(buyer.id)}
                         className="text-blue-500 rounded"
                       />
-                      <span className="text-sm">{buyer.name}</span>
-                      <span className="text-xs text-gray-500">({buyer.organization})</span>
+                      <span className="text-sm text-gray-900 dark:text-gray-100">{buyer.name}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">({buyer.organization})</span>
                     </label>
                   ))}
                 </div>
 
-                <p className="mt-2 text-sm text-gray-500">
+                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
                   {currentSupplier.preferenceList.length} buyer(s) selected
                 </p>
               </div>
             )}
           </>
         ) : (
-          <p className="text-gray-500">Select a supplier to configure preferences</p>
+          <p className="text-gray-500 dark:text-gray-400">Select a supplier to configure preferences</p>
         )}
       </div>
     </div>

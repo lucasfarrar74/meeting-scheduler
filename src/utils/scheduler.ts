@@ -120,6 +120,129 @@ export function findAvailableSlotForMeeting(
   return null;
 }
 
+/**
+ * Find the next available slot after a specific slot where both supplier and buyer are free
+ */
+export function findNextAvailableSlotAfter(
+  meeting: Meeting,
+  timeSlots: TimeSlot[],
+  meetings: Meeting[],
+  afterSlotId: string
+): TimeSlot | null {
+  const meetingSlots = timeSlots.filter(slot => !slot.isBreak);
+
+  // Find the index of the "after" slot
+  const afterSlotIndex = meetingSlots.findIndex(slot => slot.id === afterSlotId);
+  if (afterSlotIndex === -1) return null;
+
+  // Only consider slots after the specified one
+  const laterSlots = meetingSlots.slice(afterSlotIndex + 1);
+
+  for (const slot of laterSlots) {
+    const slotMeetings = meetings.filter(
+      m => m.timeSlotId === slot.id &&
+           m.status !== 'cancelled' &&
+           m.status !== 'bumped'
+    );
+
+    const supplierBusy = slotMeetings.some(m => m.supplierId === meeting.supplierId);
+    const buyerBusy = slotMeetings.some(m => m.buyerId === meeting.buyerId);
+
+    if (!supplierBusy && !buyerBusy) {
+      return slot;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Bump a meeting to a later slot
+ * Returns the updated meetings array and info about what happened
+ */
+export function bumpMeetingToLaterSlot(
+  meetingId: string,
+  meetings: Meeting[],
+  timeSlots: TimeSlot[]
+): {
+  updatedMeetings: Meeting[];
+  success: boolean;
+  newSlotId?: string;
+  message: string;
+} {
+  const meeting = meetings.find(m => m.id === meetingId);
+  if (!meeting) {
+    return { updatedMeetings: meetings, success: false, message: 'Meeting not found' };
+  }
+
+  if (meeting.status === 'cancelled' || meeting.status === 'bumped') {
+    return { updatedMeetings: meetings, success: false, message: 'Cannot bump cancelled or already bumped meeting' };
+  }
+
+  // Find the next available slot
+  const nextSlot = findNextAvailableSlotAfter(meeting, timeSlots, meetings, meeting.timeSlotId);
+
+  if (!nextSlot) {
+    return {
+      updatedMeetings: meetings,
+      success: false,
+      message: 'No available slots later in the day for both supplier and buyer'
+    };
+  }
+
+  const now = new Date().toISOString();
+
+  // Create updated meetings array
+  const updatedMeetings = meetings.map(m => {
+    if (m.id === meetingId) {
+      // Mark original as bumped
+      return {
+        ...m,
+        status: 'bumped' as const,
+        delayedAt: now,
+      };
+    }
+    return m;
+  });
+
+  // Add new meeting in the later slot
+  const newMeeting: Meeting = {
+    id: generateId(),
+    supplierId: meeting.supplierId,
+    buyerId: meeting.buyerId,
+    timeSlotId: nextSlot.id,
+    status: 'scheduled',
+    originalTimeSlotId: meeting.timeSlotId,
+    bumpedFrom: meeting.id,
+  };
+
+  updatedMeetings.push(newMeeting);
+
+  return {
+    updatedMeetings,
+    success: true,
+    newSlotId: nextSlot.id,
+    message: `Meeting bumped to later slot`,
+  };
+}
+
+/**
+ * Get all meetings that would be affected if we bump a meeting
+ * (for cascade preview)
+ */
+export function getConflictingMeetingsForBump(
+  meeting: Meeting,
+  targetSlotId: string,
+  meetings: Meeting[]
+): Meeting[] {
+  return meetings.filter(
+    m => m.timeSlotId === targetSlotId &&
+         m.status !== 'cancelled' &&
+         m.status !== 'bumped' &&
+         (m.supplierId === meeting.supplierId || m.buyerId === meeting.buyerId)
+  );
+}
+
 export function autoFillCancelledSlots(
   suppliers: Supplier[],
   buyers: Buyer[],

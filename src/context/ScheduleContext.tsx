@@ -1,6 +1,8 @@
-import { createContext, useContext, useMemo, useCallback } from 'react';
+import { createContext, useContext, useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useFirebaseSync } from '../hooks/useFirebaseSync';
+import { useHistoryTracker } from '../hooks/useHistory';
 import type {
   ScheduleState,
   ScheduleContextType,
@@ -9,259 +11,872 @@ import type {
   Buyer,
   MeetingStatus,
   Meeting,
+  MeetingNote,
   TimeSlot,
   UnscheduledPair,
+  Project,
+  AppState,
 } from '../types';
 import { isLegacySupplier, migrateSupplier } from '../types';
-import { autoFillCancelledSlots } from '../utils/scheduler';
-import { generateScheduleAsync } from '../utils/schedulerAsync';
+import { autoFillCancelledSlots, bumpMeetingToLaterSlot, findNextAvailableSlotAfter } from '../utils/scheduler';
+import { assignBuyerColors } from '../utils/colors';
 
-const initialState: ScheduleState = {
-  eventConfig: null,
-  suppliers: [],
-  buyers: [],
-  meetings: [],
-  timeSlots: [],
-  unscheduledPairs: [],
+// Generate unique ID
+function generateId(): string {
+  return Math.random().toString(36).substring(2, 11);
+}
+
+// Create a new empty project
+function createEmptyProject(name: string): Project {
+  const now = new Date().toISOString();
+  return {
+    id: generateId(),
+    name,
+    createdAt: now,
+    updatedAt: now,
+    eventConfig: null,
+    suppliers: [],
+    buyers: [],
+    meetings: [],
+    timeSlots: [],
+    unscheduledPairs: [],
+  };
+}
+
+const initialAppState: AppState = {
+  projects: [],
+  activeProjectId: null,
   isGenerating: false,
 };
 
-// Migration function for old data format
-function migrateState(data: unknown): ScheduleState {
-  if (!data || typeof data !== 'object') return initialState;
+// Migrate single ScheduleState to Project
+function migrateScheduleStateToProject(data: Record<string, unknown>): Project {
+  const now = new Date().toISOString();
 
-  const rawData = data as Record<string, unknown>;
-
-  // Start with initial state defaults, then overlay loaded data
-  const state: ScheduleState = {
-    ...initialState,
-    eventConfig: (rawData.eventConfig as EventConfig | null) ?? null,
-    suppliers: (rawData.suppliers as Supplier[]) ?? [],
-    buyers: (rawData.buyers as Buyer[]) ?? [],
-    meetings: (rawData.meetings as Meeting[]) ?? [],
-    timeSlots: (rawData.timeSlots as TimeSlot[]) ?? [],
-    unscheduledPairs: (rawData.unscheduledPairs as UnscheduledPair[]) ?? [],
-    isGenerating: false, // Always reset to false on load
-  };
-
-  // Migrate suppliers if they're in the old format
-  if (state.suppliers.length > 0) {
-    const firstSupplier = state.suppliers[0];
-    if (isLegacySupplier(firstSupplier)) {
-      state.suppliers = state.suppliers.map(s =>
-        migrateSupplier(s as unknown as Parameters<typeof migrateSupplier>[0])
-      );
-    }
+  let suppliers = (data.suppliers as Supplier[]) ?? [];
+  // Migrate legacy suppliers if needed
+  if (suppliers.length > 0 && isLegacySupplier(suppliers[0])) {
+    suppliers = suppliers.map(s =>
+      migrateSupplier(s as unknown as Parameters<typeof migrateSupplier>[0])
+    );
   }
 
-  // Restore Date objects from strings for timeSlots
-  if (state.timeSlots.length > 0) {
-    state.timeSlots = state.timeSlots.map(slot => ({
+  let timeSlots = (data.timeSlots as TimeSlot[]) ?? [];
+  // Restore Date objects
+  if (timeSlots.length > 0) {
+    timeSlots = timeSlots.map(slot => ({
       ...slot,
       startTime: new Date(slot.startTime),
       endTime: new Date(slot.endTime),
     }));
   }
 
-  return state;
+  const eventConfig = data.eventConfig as EventConfig | null;
+
+  return {
+    id: generateId(),
+    name: eventConfig?.name || 'Imported Project',
+    createdAt: now,
+    updatedAt: now,
+    eventConfig: eventConfig ?? null,
+    suppliers,
+    buyers: (data.buyers as Buyer[]) ?? [],
+    meetings: (data.meetings as Meeting[]) ?? [],
+    timeSlots,
+    unscheduledPairs: (data.unscheduledPairs as UnscheduledPair[]) ?? [],
+  };
+}
+
+// Migration function for stored data
+function migrateAppState(data: unknown): AppState {
+  if (!data || typeof data !== 'object') return initialAppState;
+
+  const rawData = data as Record<string, unknown>;
+
+  // Check if this is new AppState format
+  if (Array.isArray(rawData.projects)) {
+    // Already in AppState format, just restore Date objects
+    const projects = (rawData.projects as Project[]).map(project => ({
+      ...project,
+      timeSlots: project.timeSlots.map(slot => ({
+        ...slot,
+        startTime: new Date(slot.startTime),
+        endTime: new Date(slot.endTime),
+      })),
+    }));
+
+    return {
+      projects,
+      activeProjectId: (rawData.activeProjectId as string | null) ?? (projects[0]?.id ?? null),
+      isGenerating: false,
+    };
+  }
+
+  // Old ScheduleState format - migrate to AppState with single project
+  if (rawData.eventConfig !== undefined || rawData.suppliers !== undefined) {
+    const migratedProject = migrateScheduleStateToProject(rawData);
+    return {
+      projects: [migratedProject],
+      activeProjectId: migratedProject.id,
+      isGenerating: false,
+    };
+  }
+
+  return initialAppState;
+}
+
+// Helper to restore TimeSlot dates in a project
+function restoreProjectDates(project: Project): Project {
+  return {
+    ...project,
+    timeSlots: project.timeSlots.map(slot => ({
+      ...slot,
+      startTime: new Date(slot.startTime),
+      endTime: new Date(slot.endTime),
+    })),
+  };
 }
 
 const ScheduleContext = createContext<ScheduleContextType | undefined>(undefined);
 
+// Type for history snapshots
+interface MeetingsSnapshot {
+  meetings: Meeting[];
+  timeSlots: TimeSlot[];
+  unscheduledPairs: UnscheduledPair[];
+}
+
 export function ScheduleProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useLocalStorage<ScheduleState>('meeting-scheduler-state', initialState, migrateState);
+  const [appState, setAppState] = useLocalStorage<AppState>(
+    'meeting-scheduler-projects',
+    initialAppState,
+    migrateAppState
+  );
 
+  // History tracking for undo/redo
+  const historyTracker = useHistoryTracker<MeetingsSnapshot>(20);
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
+
+  // Create default project if none exist
+  useEffect(() => {
+    if (appState.projects.length === 0) {
+      const defaultProject = createEmptyProject('New Event');
+      setAppState({
+        projects: [defaultProject],
+        activeProjectId: defaultProject.id,
+        isGenerating: false,
+      });
+    }
+  }, [appState.projects.length, setAppState]);
+
+  // Get active project
+  const activeProject = useMemo(() => {
+    if (!appState.activeProjectId) return null;
+    return appState.projects.find(p => p.id === appState.activeProjectId) ?? null;
+  }, [appState.projects, appState.activeProjectId]);
+
+  // Firebase sync
+  const handleRemoteProjectUpdate = useCallback((remoteProject: Project) => {
+    setAppState(prev => ({
+      ...prev,
+      projects: prev.projects.map(p =>
+        p.shareId === remoteProject.shareId ? remoteProject : p
+      ),
+    }));
+  }, [setAppState]);
+
+  const {
+    isEnabled: isFirebaseEnabled,
+    syncStatus,
+    activeCollaborators,
+    uploadProject,
+    openProject,
+    syncProject,
+    stopSync,
+    disconnectProject: disconnectFromCloudInternal,
+  } = useFirebaseSync({
+    onProjectUpdate: handleRemoteProjectUpdate,
+    onError: (error) => console.error('Firebase sync error:', error),
+  });
+
+  // Track if we're syncing a cloud project
+  const lastSyncedProjectRef = useRef<string | null>(null);
+
+  // Start/stop syncing when active project changes
+  useEffect(() => {
+    if (activeProject?.isCloud && activeProject.shareId) {
+      if (lastSyncedProjectRef.current !== activeProject.shareId) {
+        syncProject(activeProject);
+        lastSyncedProjectRef.current = activeProject.shareId;
+      }
+    } else {
+      if (lastSyncedProjectRef.current) {
+        stopSync();
+        lastSyncedProjectRef.current = null;
+      }
+    }
+  }, [activeProject, syncProject, stopSync]);
+
+  // Helper to update the active project
+  const updateActiveProject = useCallback((updater: (project: Project) => Project) => {
+    setAppState(prev => {
+      if (!prev.activeProjectId) return prev;
+      const now = new Date().toISOString();
+      return {
+        ...prev,
+        projects: prev.projects.map(p =>
+          p.id === prev.activeProjectId
+            ? { ...updater(p), updatedAt: now }
+            : p
+        ),
+      };
+    });
+  }, [setAppState]);
+
+  // Save current state to history before making changes
+  const saveToHistory = useCallback(() => {
+    if (!activeProject) return;
+    historyTracker.push({
+      meetings: activeProject.meetings,
+      timeSlots: activeProject.timeSlots,
+      unscheduledPairs: activeProject.unscheduledPairs,
+    });
+    setHistoryState({ canUndo: true, canRedo: false });
+  }, [activeProject, historyTracker]);
+
+  // Undo last operation
+  const undo = useCallback(() => {
+    const snapshot = historyTracker.undo();
+    if (snapshot) {
+      updateActiveProject(project => ({
+        ...project,
+        meetings: snapshot.meetings,
+        timeSlots: snapshot.timeSlots,
+        unscheduledPairs: snapshot.unscheduledPairs,
+      }));
+      setHistoryState({ canUndo: historyTracker.canUndo, canRedo: historyTracker.canRedo });
+    }
+  }, [historyTracker, updateActiveProject]);
+
+  // Redo last undone operation
+  const redo = useCallback(() => {
+    const snapshot = historyTracker.redo();
+    if (snapshot) {
+      updateActiveProject(project => ({
+        ...project,
+        meetings: snapshot.meetings,
+        timeSlots: snapshot.timeSlots,
+        unscheduledPairs: snapshot.unscheduledPairs,
+      }));
+      setHistoryState({ canUndo: historyTracker.canUndo, canRedo: historyTracker.canRedo });
+    }
+  }, [historyTracker, updateActiveProject]);
+
+  // Clear history when switching projects
+  const lastProjectIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (appState.activeProjectId !== lastProjectIdRef.current) {
+      historyTracker.clear();
+      setHistoryState({ canUndo: false, canRedo: false });
+      lastProjectIdRef.current = appState.activeProjectId;
+    }
+  }, [appState.activeProjectId, historyTracker]);
+
+  // Project management
+  const createProject = useCallback((name: string): Project => {
+    const newProject = createEmptyProject(name);
+    setAppState(prev => ({
+      ...prev,
+      projects: [...prev.projects, newProject],
+      activeProjectId: newProject.id,
+    }));
+    return newProject;
+  }, [setAppState]);
+
+  const switchProject = useCallback((projectId: string) => {
+    setAppState(prev => ({
+      ...prev,
+      activeProjectId: projectId,
+    }));
+  }, [setAppState]);
+
+  const deleteProject = useCallback((projectId: string) => {
+    setAppState(prev => {
+      const newProjects = prev.projects.filter(p => p.id !== projectId);
+      let newActiveId = prev.activeProjectId;
+
+      // If deleting active project, switch to first remaining or null
+      if (prev.activeProjectId === projectId) {
+        newActiveId = newProjects[0]?.id ?? null;
+      }
+
+      return {
+        ...prev,
+        projects: newProjects,
+        activeProjectId: newActiveId,
+      };
+    });
+  }, [setAppState]);
+
+  const duplicateProject = useCallback((projectId: string): Project => {
+    const source = appState.projects.find(p => p.id === projectId);
+    if (!source) throw new Error('Project not found');
+
+    const now = new Date().toISOString();
+    const newProject: Project = {
+      ...source,
+      id: generateId(),
+      name: `${source.name} (Copy)`,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    setAppState(prev => ({
+      ...prev,
+      projects: [...prev.projects, newProject],
+      activeProjectId: newProject.id,
+    }));
+
+    return newProject;
+  }, [appState.projects, setAppState]);
+
+  const renameProject = useCallback((projectId: string, name: string) => {
+    setAppState(prev => ({
+      ...prev,
+      projects: prev.projects.map(p =>
+        p.id === projectId
+          ? { ...p, name, updatedAt: new Date().toISOString() }
+          : p
+      ),
+    }));
+  }, [setAppState]);
+
+  // Event config
   const setEventConfig = useCallback((config: EventConfig) => {
-    setState(prev => ({ ...prev, eventConfig: config, meetings: [], timeSlots: [] }));
-  }, [setState]);
+    updateActiveProject(project => ({
+      ...project,
+      eventConfig: config,
+      meetings: [],
+      timeSlots: [],
+    }));
+  }, [updateActiveProject]);
 
+  // Suppliers
   const addSupplier = useCallback((supplier: Supplier) => {
-    setState(prev => ({ ...prev, suppliers: [...prev.suppliers, supplier] }));
-  }, [setState]);
+    updateActiveProject(project => ({
+      ...project,
+      suppliers: [...project.suppliers, supplier],
+    }));
+  }, [updateActiveProject]);
 
   const updateSupplier = useCallback((id: string, updates: Partial<Supplier>) => {
-    setState(prev => ({
-      ...prev,
-      suppliers: prev.suppliers.map(s => (s.id === id ? { ...s, ...updates } : s)),
+    updateActiveProject(project => ({
+      ...project,
+      suppliers: project.suppliers.map(s => (s.id === id ? { ...s, ...updates } : s)),
     }));
-  }, [setState]);
+  }, [updateActiveProject]);
 
   const removeSupplier = useCallback((id: string) => {
-    setState(prev => ({
-      ...prev,
-      suppliers: prev.suppliers.filter(s => s.id !== id),
-      meetings: prev.meetings.filter(m => m.supplierId !== id),
+    updateActiveProject(project => ({
+      ...project,
+      suppliers: project.suppliers.filter(s => s.id !== id),
+      meetings: project.meetings.filter(m => m.supplierId !== id),
     }));
-  }, [setState]);
+  }, [updateActiveProject]);
 
+  const importSuppliers = useCallback((suppliers: Supplier[]) => {
+    updateActiveProject(project => ({
+      ...project,
+      suppliers,
+      meetings: [],
+      timeSlots: [],
+    }));
+  }, [updateActiveProject]);
+
+  // Buyers
   const addBuyer = useCallback((buyer: Buyer) => {
-    setState(prev => ({ ...prev, buyers: [...prev.buyers, buyer] }));
-  }, [setState]);
+    updateActiveProject(project => ({
+      ...project,
+      buyers: [...project.buyers, buyer],
+    }));
+  }, [updateActiveProject]);
 
   const updateBuyer = useCallback((id: string, updates: Partial<Buyer>) => {
-    setState(prev => ({
-      ...prev,
-      buyers: prev.buyers.map(b => (b.id === id ? { ...b, ...updates } : b)),
+    updateActiveProject(project => ({
+      ...project,
+      buyers: project.buyers.map(b => (b.id === id ? { ...b, ...updates } : b)),
     }));
-  }, [setState]);
+  }, [updateActiveProject]);
 
   const removeBuyer = useCallback((id: string) => {
-    setState(prev => ({
-      ...prev,
-      buyers: prev.buyers.filter(b => b.id !== id),
-      meetings: prev.meetings.filter(m => m.buyerId !== id),
-      suppliers: prev.suppliers.map(s => ({
+    updateActiveProject(project => ({
+      ...project,
+      buyers: project.buyers.filter(b => b.id !== id),
+      meetings: project.meetings.filter(m => m.buyerId !== id),
+      suppliers: project.suppliers.map(s => ({
         ...s,
         preferenceList: s.preferenceList.filter(bid => bid !== id),
       })),
     }));
-  }, [setState]);
-
-  const importSuppliers = useCallback((suppliers: Supplier[]) => {
-    setState(prev => ({ ...prev, suppliers, meetings: [], timeSlots: [] }));
-  }, [setState]);
+  }, [updateActiveProject]);
 
   const importBuyers = useCallback((buyers: Buyer[]) => {
-    setState(prev => ({ ...prev, buyers, meetings: [], timeSlots: [] }));
-  }, [setState]);
-
-  const generateScheduleAction = useCallback(async () => {
-    // Get current state for the async operation
-    const currentState = state;
-    if (!currentState.eventConfig) return;
-
-    // Set generating state
-    setState(prev => ({ ...prev, isGenerating: true }));
-
-    try {
-      // Use async scheduler that yields to browser periodically
-      const result = await generateScheduleAsync(
-        currentState.eventConfig,
-        currentState.suppliers,
-        currentState.buyers
-      );
-
-      setState(prev => ({
-        ...prev,
-        meetings: result.meetings,
-        timeSlots: result.timeSlots,
-        unscheduledPairs: result.unscheduledPairs,
-        isGenerating: false,
-      }));
-    } catch (error) {
-      console.error('Schedule generation failed:', error);
-      setState(prev => ({ ...prev, isGenerating: false }));
-    }
-  }, [state, setState]);
-
-  const updateMeetingStatus = useCallback((meetingId: string, status: MeetingStatus) => {
-    setState(prev => ({
-      ...prev,
-      meetings: prev.meetings.map(m => (m.id === meetingId ? { ...m, status } : m)),
+    updateActiveProject(project => ({
+      ...project,
+      buyers,
+      meetings: [],
+      timeSlots: [],
     }));
-  }, [setState]);
+  }, [updateActiveProject]);
+
+  const autoAssignBuyerColors = useCallback(() => {
+    updateActiveProject(project => ({
+      ...project,
+      buyers: assignBuyerColors(project.buyers),
+    }));
+  }, [updateActiveProject]);
+
+  // Schedule generation
+  const generateScheduleAction = useCallback(() => {
+    if (!activeProject?.eventConfig) return;
+
+    setAppState(prev => ({ ...prev, isGenerating: true }));
+
+    const worker = new Worker(
+      new URL('../workers/scheduler.worker.ts', import.meta.url),
+      { type: 'module' }
+    );
+
+    worker.postMessage({
+      config: activeProject.eventConfig,
+      suppliers: activeProject.suppliers,
+      buyers: activeProject.buyers,
+    });
+
+    worker.onmessage = (e) => {
+      updateActiveProject(project => ({
+        ...project,
+        meetings: e.data.meetings,
+        timeSlots: e.data.timeSlots,
+        unscheduledPairs: e.data.unscheduledPairs,
+      }));
+      setAppState(prev => ({ ...prev, isGenerating: false }));
+      worker.terminate();
+    };
+
+    worker.onerror = (error) => {
+      console.error('Worker error:', error);
+      setAppState(prev => ({ ...prev, isGenerating: false }));
+      worker.terminate();
+    };
+  }, [activeProject, setAppState, updateActiveProject]);
+
+  // Meeting operations
+  const updateMeetingStatus = useCallback((meetingId: string, status: MeetingStatus) => {
+    saveToHistory();
+    updateActiveProject(project => ({
+      ...project,
+      meetings: project.meetings.map(m => (m.id === meetingId ? { ...m, status } : m)),
+    }));
+  }, [saveToHistory, updateActiveProject]);
 
   const swapMeetings = useCallback((meetingId1: string, meetingId2: string) => {
-    setState(prev => {
-      const meeting1 = prev.meetings.find(m => m.id === meetingId1);
-      const meeting2 = prev.meetings.find(m => m.id === meetingId2);
-      if (!meeting1 || !meeting2) return prev;
+    saveToHistory();
+    updateActiveProject(project => {
+      const meeting1 = project.meetings.find(m => m.id === meetingId1);
+      const meeting2 = project.meetings.find(m => m.id === meetingId2);
+      if (!meeting1 || !meeting2) return project;
 
       return {
-        ...prev,
-        meetings: prev.meetings.map(m => {
+        ...project,
+        meetings: project.meetings.map(m => {
           if (m.id === meetingId1) return { ...m, timeSlotId: meeting2.timeSlotId };
           if (m.id === meetingId2) return { ...m, timeSlotId: meeting1.timeSlotId };
           return m;
         }),
       };
     });
-  }, [setState]);
+  }, [saveToHistory, updateActiveProject]);
 
   const moveMeeting = useCallback((meetingId: string, newTimeSlotId: string) => {
-    setState(prev => ({
-      ...prev,
-      meetings: prev.meetings.map(m =>
+    saveToHistory();
+    updateActiveProject(project => ({
+      ...project,
+      meetings: project.meetings.map(m =>
         m.id === meetingId ? { ...m, timeSlotId: newTimeSlotId } : m
       ),
     }));
-  }, [setState]);
+  }, [saveToHistory, updateActiveProject]);
 
   const cancelMeeting = useCallback((meetingId: string) => {
-    setState(prev => ({
-      ...prev,
-      meetings: prev.meetings.map(m => (m.id === meetingId ? { ...m, status: 'cancelled' as const } : m)),
+    saveToHistory();
+    updateActiveProject(project => ({
+      ...project,
+      meetings: project.meetings.map(m =>
+        m.id === meetingId ? { ...m, status: 'cancelled' as const } : m
+      ),
     }));
-  }, [setState]);
+  }, [saveToHistory, updateActiveProject]);
 
   const autoFillGaps = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      meetings: autoFillCancelledSlots(prev.suppliers, prev.buyers, prev.timeSlots, prev.meetings),
+    saveToHistory();
+    updateActiveProject(project => ({
+      ...project,
+      meetings: autoFillCancelledSlots(
+        project.suppliers,
+        project.buyers,
+        project.timeSlots,
+        project.meetings
+      ),
     }));
-  }, [setState]);
+  }, [saveToHistory, updateActiveProject]);
 
   const clearSchedule = useCallback(() => {
-    setState(prev => ({ ...prev, meetings: [], timeSlots: [], unscheduledPairs: [] }));
-  }, [setState]);
+    saveToHistory();
+    updateActiveProject(project => ({
+      ...project,
+      meetings: [],
+      timeSlots: [],
+      unscheduledPairs: [],
+    }));
+  }, [saveToHistory, updateActiveProject]);
 
+  // Delay handling
+  const markMeetingDelayed = useCallback((meetingId: string, reason?: string) => {
+    saveToHistory();
+    const now = new Date().toISOString();
+    updateActiveProject(project => ({
+      ...project,
+      meetings: project.meetings.map(m =>
+        m.id === meetingId
+          ? { ...m, status: 'delayed' as const, delayReason: reason, delayedAt: now }
+          : m
+      ),
+    }));
+  }, [saveToHistory, updateActiveProject]);
+
+  const markMeetingRunningLate = useCallback((meetingId: string) => {
+    saveToHistory();
+    const now = new Date().toISOString();
+    updateActiveProject(project => ({
+      ...project,
+      meetings: project.meetings.map(m =>
+        m.id === meetingId
+          ? { ...m, status: 'running_late' as const, delayedAt: now }
+          : m
+      ),
+    }));
+  }, [saveToHistory, updateActiveProject]);
+
+  const startMeeting = useCallback((meetingId: string) => {
+    saveToHistory();
+    updateActiveProject(project => ({
+      ...project,
+      meetings: project.meetings.map(m =>
+        m.id === meetingId ? { ...m, status: 'in_progress' as const } : m
+      ),
+    }));
+  }, [saveToHistory, updateActiveProject]);
+
+  const bumpMeetingAction = useCallback((meetingId: string): { success: boolean; newSlotId?: string; message: string } => {
+    if (!activeProject) {
+      return { success: false, message: 'No active project' };
+    }
+
+    const result = bumpMeetingToLaterSlot(meetingId, activeProject.meetings, activeProject.timeSlots);
+
+    if (result.success) {
+      saveToHistory();
+      updateActiveProject(project => ({
+        ...project,
+        meetings: result.updatedMeetings,
+      }));
+    }
+
+    return {
+      success: result.success,
+      newSlotId: result.newSlotId,
+      message: result.message,
+    };
+  }, [activeProject, saveToHistory, updateActiveProject]);
+
+  const findNextAvailableSlotAction = useCallback((meetingId: string): string | null => {
+    if (!activeProject) return null;
+
+    const meeting = activeProject.meetings.find(m => m.id === meetingId);
+    if (!meeting) return null;
+
+    const slot = findNextAvailableSlotAfter(
+      meeting,
+      activeProject.timeSlots,
+      activeProject.meetings,
+      meeting.timeSlotId
+    );
+
+    return slot?.id ?? null;
+  }, [activeProject]);
+
+  // Meeting notes
+  const addMeetingNote = useCallback((meetingId: string, content: string) => {
+    const note: MeetingNote = {
+      id: generateId(),
+      meetingId,
+      userId: 'local-user', // Would be Firebase user ID in cloud mode
+      userName: 'You',
+      content,
+      timestamp: new Date().toISOString(),
+    };
+
+    updateActiveProject(project => ({
+      ...project,
+      meetings: project.meetings.map(m =>
+        m.id === meetingId
+          ? { ...m, notes: [...(m.notes || []), note] }
+          : m
+      ),
+    }));
+  }, [updateActiveProject]);
+
+  // Import/Export
   const exportToJSON = useCallback((): string => {
-    return JSON.stringify(state, null, 2);
-  }, [state]);
+    if (!activeProject) return '{}';
+    return JSON.stringify(activeProject, null, 2);
+  }, [activeProject]);
 
   const importFromJSON = useCallback((json: string) => {
     try {
-      const parsed = JSON.parse(json) as ScheduleState;
-      if (parsed.timeSlots) {
-        parsed.timeSlots = parsed.timeSlots.map(slot => ({
-          ...slot,
-          startTime: new Date(slot.startTime),
-          endTime: new Date(slot.endTime),
+      const parsed = JSON.parse(json);
+
+      // Check if it's a Project or old ScheduleState format
+      if (parsed.id && parsed.name && parsed.createdAt) {
+        // It's a Project - restore dates and add/replace
+        const project = restoreProjectDates(parsed as Project);
+        setAppState(prev => {
+          const existingIndex = prev.projects.findIndex(p => p.id === project.id);
+          if (existingIndex >= 0) {
+            // Replace existing project
+            const newProjects = [...prev.projects];
+            newProjects[existingIndex] = project;
+            return { ...prev, projects: newProjects, activeProjectId: project.id };
+          } else {
+            // Add new project
+            return {
+              ...prev,
+              projects: [...prev.projects, project],
+              activeProjectId: project.id,
+            };
+          }
+        });
+      } else {
+        // Old format - migrate to project and add
+        const project = migrateScheduleStateToProject(parsed);
+        setAppState(prev => ({
+          ...prev,
+          projects: [...prev.projects, project],
+          activeProjectId: project.id,
         }));
       }
-      setState(parsed);
     } catch (error) {
       console.error('Failed to import JSON:', error);
       throw new Error('Invalid JSON format');
     }
-  }, [setState]);
+  }, [setAppState]);
+
+  const exportProjectToJSON = useCallback((projectId: string): string => {
+    const project = appState.projects.find(p => p.id === projectId);
+    if (!project) throw new Error('Project not found');
+    return JSON.stringify(project, null, 2);
+  }, [appState.projects]);
+
+  const importProjectFromJSON = useCallback((json: string): Project => {
+    try {
+      const parsed = JSON.parse(json);
+      const project = restoreProjectDates(
+        parsed.id ? parsed : migrateScheduleStateToProject(parsed)
+      );
+
+      // Generate new ID to avoid conflicts
+      const newProject = {
+        ...project,
+        id: generateId(),
+        name: `${project.name} (Imported)`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      setAppState(prev => ({
+        ...prev,
+        projects: [...prev.projects, newProject],
+        activeProjectId: newProject.id,
+      }));
+
+      return newProject;
+    } catch (error) {
+      console.error('Failed to import project:', error);
+      throw new Error('Invalid JSON format');
+    }
+  }, [setAppState]);
 
   const resetAllData = useCallback(() => {
-    setState(initialState);
-  }, [setState]);
+    setAppState(initialAppState);
+  }, [setAppState]);
+
+  // Cloud sync methods
+  const uploadProjectToCloud = useCallback(async (projectId: string): Promise<string | null> => {
+    const project = appState.projects.find(p => p.id === projectId);
+    if (!project) return null;
+
+    const shareId = await uploadProject(project);
+    if (shareId) {
+      // Update local project with cloud info
+      setAppState(prev => ({
+        ...prev,
+        projects: prev.projects.map(p =>
+          p.id === projectId
+            ? { ...p, isCloud: true, shareId }
+            : p
+        ),
+      }));
+    }
+    return shareId;
+  }, [appState.projects, uploadProject, setAppState]);
+
+  const openCloudProject = useCallback(async (shareId: string): Promise<Project | null> => {
+    // Check if we already have this project locally
+    const existingProject = appState.projects.find(p => p.shareId === shareId);
+    if (existingProject) {
+      setAppState(prev => ({ ...prev, activeProjectId: existingProject.id }));
+      return existingProject;
+    }
+
+    // Fetch from cloud
+    const cloudProject = await openProject(shareId);
+    if (!cloudProject) return null;
+
+    // Add to local projects
+    setAppState(prev => ({
+      ...prev,
+      projects: [...prev.projects, cloudProject],
+      activeProjectId: cloudProject.id,
+    }));
+
+    return cloudProject;
+  }, [appState.projects, openProject, setAppState]);
+
+  const disconnectFromCloud = useCallback((projectId: string) => {
+    disconnectFromCloudInternal(projectId);
+    setAppState(prev => ({
+      ...prev,
+      projects: prev.projects.map(p =>
+        p.id === projectId
+          ? { ...p, isCloud: false, shareId: undefined }
+          : p
+      ),
+    }));
+  }, [disconnectFromCloudInternal, setAppState]);
+
+  // Build ScheduleState-compatible object for backwards compatibility
+  const scheduleState: ScheduleState = useMemo(() => ({
+    eventConfig: activeProject?.eventConfig ?? null,
+    suppliers: activeProject?.suppliers ?? [],
+    buyers: activeProject?.buyers ?? [],
+    meetings: activeProject?.meetings ?? [],
+    timeSlots: activeProject?.timeSlots ?? [],
+    unscheduledPairs: activeProject?.unscheduledPairs ?? [],
+    isGenerating: appState.isGenerating,
+  }), [activeProject, appState.isGenerating]);
 
   const value = useMemo<ScheduleContextType>(() => ({
-    ...state,
+    // ScheduleState fields
+    ...scheduleState,
+
+    // Project management
+    projects: appState.projects,
+    activeProjectId: appState.activeProjectId,
+    activeProject,
+    createProject,
+    switchProject,
+    deleteProject,
+    duplicateProject,
+    renameProject,
+
+    // Event config
     setEventConfig,
+
+    // Suppliers
     addSupplier,
     updateSupplier,
     removeSupplier,
+    importSuppliers,
+
+    // Buyers
     addBuyer,
     updateBuyer,
     removeBuyer,
-    importSuppliers,
     importBuyers,
+    autoAssignBuyerColors,
+
+    // Schedule generation
     generateSchedule: generateScheduleAction,
+
+    // Meeting operations
     updateMeetingStatus,
     swapMeetings,
     moveMeeting,
     cancelMeeting,
     autoFillGaps,
     clearSchedule,
+
+    // Delay handling
+    markMeetingDelayed,
+    markMeetingRunningLate,
+    startMeeting,
+    bumpMeeting: bumpMeetingAction,
+    findNextAvailableSlot: findNextAvailableSlotAction,
+
+    // Meeting notes
+    addMeetingNote,
+
+    // Import/Export
     exportToJSON,
     importFromJSON,
+    exportProjectToJSON,
+    importProjectFromJSON,
     resetAllData,
+
+    // Cloud sync
+    isFirebaseEnabled,
+    syncStatus,
+    activeCollaborators,
+    uploadProjectToCloud,
+    openCloudProject,
+    disconnectFromCloud,
+
+    // Undo/Redo
+    undo,
+    redo,
+    canUndo: historyState.canUndo,
+    canRedo: historyState.canRedo,
   }), [
-    state,
+    scheduleState,
+    appState.projects,
+    appState.activeProjectId,
+    activeProject,
+    createProject,
+    switchProject,
+    deleteProject,
+    duplicateProject,
+    renameProject,
     setEventConfig,
     addSupplier,
     updateSupplier,
     removeSupplier,
+    importSuppliers,
     addBuyer,
     updateBuyer,
     removeBuyer,
-    importSuppliers,
     importBuyers,
+    autoAssignBuyerColors,
     generateScheduleAction,
     updateMeetingStatus,
     swapMeetings,
@@ -269,9 +884,26 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     cancelMeeting,
     autoFillGaps,
     clearSchedule,
+    markMeetingDelayed,
+    markMeetingRunningLate,
+    startMeeting,
+    bumpMeetingAction,
+    findNextAvailableSlotAction,
+    addMeetingNote,
     exportToJSON,
     importFromJSON,
+    exportProjectToJSON,
+    importProjectFromJSON,
     resetAllData,
+    isFirebaseEnabled,
+    syncStatus,
+    activeCollaborators,
+    uploadProjectToCloud,
+    openCloudProject,
+    disconnectFromCloud,
+    undo,
+    redo,
+    historyState,
   ]);
 
   return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
