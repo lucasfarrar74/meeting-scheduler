@@ -12,7 +12,7 @@ interface MobileScheduleViewProps {
 type ViewMode = 'timeline' | 'supplier' | 'buyer';
 
 export default function MobileScheduleView({ onMeetingClick, onStatusChange }: MobileScheduleViewProps) {
-  const { meetings, timeSlots, suppliers, buyers, updateMeeting } = useSchedule();
+  const { meetings, timeSlots, suppliers, buyers, updateMeetingStatus } = useSchedule();
   const [viewMode, setViewMode] = useState<ViewMode>('timeline');
   const [selectedSupplier, setSelectedSupplier] = useState<string | null>(
     suppliers.length > 0 ? suppliers[0].id : null
@@ -70,7 +70,7 @@ export default function MobileScheduleView({ onMeetingClick, onStatusChange }: M
     if (onStatusChange) {
       onStatusChange(meeting.id, newStatus);
     } else {
-      updateMeeting(meeting.id, { status: newStatus });
+      updateMeetingStatus(meeting.id, newStatus);
     }
   };
 
@@ -115,7 +115,7 @@ export default function MobileScheduleView({ onMeetingClick, onStatusChange }: M
                     No meetings scheduled
                   </p>
                 ) : (
-                  slotMeetings.map((meeting, index) => {
+                  slotMeetings.map((meeting) => {
                     const supplier = getSupplier(meeting.supplierId);
                     const buyer = getBuyer(meeting.buyerId);
                     const buyerColor = buyer?.color || getBuyerColor(buyers.indexOf(buyer!));

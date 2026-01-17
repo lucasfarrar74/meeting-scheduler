@@ -8,7 +8,7 @@ import StatusDashboard from './StatusDashboard';
 import ActivityFeed from './ActivityFeed';
 import BumpPreviewModal from './BumpPreviewModal';
 import MobileScheduleView from './MobileScheduleView';
-import type { Meeting, MeetingStatus } from '../types';
+import type { Meeting } from '../types';
 
 type ViewMode = 'grid' | 'supplier' | 'buyer';
 
