@@ -1,26 +1,32 @@
 import { useState, useEffect } from 'react';
 import { useSchedule } from '../context/ScheduleContext';
-import type { EventConfig, Break } from '../types';
+import type { EventConfig, Break, SchedulingStrategy } from '../types';
 import { generateId } from '../utils/timeUtils';
 
 export default function EventConfigPanel() {
   const { eventConfig, setEventConfig } = useSchedule();
 
   const [name, setName] = useState(eventConfig?.name || '');
-  const [date, setDate] = useState(eventConfig?.date || '');
+  const [startDate, setStartDate] = useState(eventConfig?.startDate || '');
+  const [endDate, setEndDate] = useState(eventConfig?.endDate || '');
   const [startTime, setStartTime] = useState(eventConfig?.startTime || '09:00');
   const [endTime, setEndTime] = useState(eventConfig?.endTime || '17:00');
   const [duration, setDuration] = useState(eventConfig?.defaultMeetingDuration || 15);
   const [breaks, setBreaks] = useState<Break[]>(eventConfig?.breaks || []);
+  const [schedulingStrategy, setSchedulingStrategy] = useState<SchedulingStrategy>(
+    eventConfig?.schedulingStrategy || 'efficient'
+  );
 
   useEffect(() => {
     if (eventConfig) {
       setName(eventConfig.name);
-      setDate(eventConfig.date);
+      setStartDate(eventConfig.startDate);
+      setEndDate(eventConfig.endDate);
       setStartTime(eventConfig.startTime);
       setEndTime(eventConfig.endTime);
       setDuration(eventConfig.defaultMeetingDuration);
       setBreaks(eventConfig.breaks);
+      setSchedulingStrategy(eventConfig.schedulingStrategy);
     }
   }, [eventConfig]);
 
@@ -40,11 +46,13 @@ export default function EventConfigPanel() {
     const config: EventConfig = {
       id: eventConfig?.id || generateId(),
       name,
-      date,
+      startDate,
+      endDate: endDate || startDate, // Default endDate to startDate if not set
       startTime,
       endTime,
       defaultMeetingDuration: duration,
       breaks,
+      schedulingStrategy,
     };
     setEventConfig(config);
   };
@@ -67,11 +75,28 @@ export default function EventConfigPanel() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start Date</label>
             <input
               type="date"
-              value={date}
-              onChange={e => setDate(e.target.value)}
+              value={startDate}
+              onChange={e => {
+                setStartDate(e.target.value);
+                // Auto-set end date if not set or if it's before new start date
+                if (!endDate || e.target.value > endDate) {
+                  setEndDate(e.target.value);
+                }
+              }}
+              className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">End Date</label>
+            <input
+              type="date"
+              value={endDate}
+              min={startDate}
+              onChange={e => setEndDate(e.target.value)}
               className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
@@ -108,6 +133,25 @@ export default function EventConfigPanel() {
               onChange={e => setDuration(Number(e.target.value))}
               className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Scheduling Strategy
+            </label>
+            <select
+              value={schedulingStrategy}
+              onChange={e => setSchedulingStrategy(e.target.value as SchedulingStrategy)}
+              className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="efficient">Most Efficient Scheduling</option>
+              <option value="spaced">Relatively Spaced Out Scheduling</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {schedulingStrategy === 'efficient'
+                ? 'Packs meetings at the beginning of each day for maximum efficiency.'
+                : 'Distributes meetings evenly across all event days to avoid front-loading.'}
+            </p>
           </div>
         </div>
       </div>
@@ -164,7 +208,7 @@ export default function EventConfigPanel() {
       <div className="flex justify-end">
         <button
           onClick={handleSave}
-          disabled={!name || !date}
+          disabled={!name || !startDate}
           className="px-6 py-2 bg-green-500 dark:bg-green-600 text-white rounded-md hover:bg-green-600 dark:hover:bg-green-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
         >
           Save Configuration

@@ -27,8 +27,11 @@ export interface Buyer {
 
 export type PreferenceType = 'all' | 'include' | 'exclude';
 
+export type SchedulingStrategy = 'efficient' | 'spaced';
+
 export interface TimeSlot {
   id: string;
+  date: string; // YYYY-MM-DD format - which day this slot belongs to
   startTime: Date;
   endTime: Date;
   isBreak: boolean;
@@ -69,11 +72,42 @@ export interface Break {
 export interface EventConfig {
   id: string;
   name: string;
-  date: string;        // YYYY-MM-DD format
-  startTime: string;   // HH:mm format
-  endTime: string;     // HH:mm format
+  startDate: string;   // YYYY-MM-DD format
+  endDate: string;     // YYYY-MM-DD format
+  startTime: string;   // HH:mm format (daily start time)
+  endTime: string;     // HH:mm format (daily end time)
   defaultMeetingDuration: number; // in minutes
   breaks: Break[];
+  schedulingStrategy: SchedulingStrategy;
+}
+
+// Legacy EventConfig for migration
+export interface LegacyEventConfig {
+  id: string;
+  name: string;
+  date: string;        // YYYY-MM-DD format (single day)
+  startTime: string;
+  endTime: string;
+  defaultMeetingDuration: number;
+  breaks: Break[];
+}
+
+export function migrateEventConfig(legacy: LegacyEventConfig): EventConfig {
+  return {
+    ...legacy,
+    startDate: legacy.date,
+    endDate: legacy.date,
+    schedulingStrategy: 'efficient',
+  };
+}
+
+export function isLegacyEventConfig(obj: unknown): obj is LegacyEventConfig {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'date' in obj &&
+    !('startDate' in obj)
+  );
 }
 
 export interface UnscheduledPair {

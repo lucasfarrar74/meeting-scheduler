@@ -1,5 +1,5 @@
 import type { Supplier, Buyer, Meeting, TimeSlot, EventConfig } from '../types';
-import { generateId, generateTimeSlots } from './timeUtils';
+import { generateId, generateTimeSlots, getDateRange } from './timeUtils';
 
 interface ScheduleResult {
   meetings: Meeting[];
@@ -20,26 +20,13 @@ export function canSupplierMeetBuyer(supplier: Supplier, buyerId: string): boole
   }
 }
 
-export function generateSchedule(
-  config: EventConfig,
+/**
+ * Build list of desired meetings based on supplier preferences
+ */
+function buildDesiredMeetings(
   suppliers: Supplier[],
   buyers: Buyer[]
-): ScheduleResult {
-  const timeSlots = generateTimeSlots(config);
-  const meetings: Meeting[] = [];
-  const unscheduledPairs: Array<{ supplierId: string; buyerId: string }> = [];
-
-  // Get non-break slots only
-  const meetingSlots = timeSlots.filter(slot => !slot.isBreak);
-
-  // Track which slots are taken for each supplier and buyer
-  const supplierSlots: Map<string, Set<string>> = new Map();
-  const buyerSlots: Map<string, Set<string>> = new Map();
-
-  suppliers.forEach(s => supplierSlots.set(s.id, new Set()));
-  buyers.forEach(b => buyerSlots.set(b.id, new Set()));
-
-  // Create list of desired meetings based on preferences
+): Array<{ supplierId: string; buyerId: string; priority: number }> {
   const desiredMeetings: Array<{ supplierId: string; buyerId: string; priority: number }> = [];
 
   suppliers.forEach(supplier => {
@@ -65,7 +52,33 @@ export function generateSchedule(
     return Math.random() - 0.5;
   });
 
-  // Assign meetings to slots
+  return desiredMeetings;
+}
+
+/**
+ * Efficient scheduling: pack meetings at the start (greedy first-available)
+ */
+function generateEfficientSchedule(
+  timeSlots: TimeSlot[],
+  suppliers: Supplier[],
+  buyers: Buyer[]
+): { meetings: Meeting[]; unscheduledPairs: Array<{ supplierId: string; buyerId: string }> } {
+  const meetings: Meeting[] = [];
+  const unscheduledPairs: Array<{ supplierId: string; buyerId: string }> = [];
+
+  // Get non-break slots only
+  const meetingSlots = timeSlots.filter(slot => !slot.isBreak);
+
+  // Track which slots are taken for each supplier and buyer
+  const supplierSlots: Map<string, Set<string>> = new Map();
+  const buyerSlots: Map<string, Set<string>> = new Map();
+
+  suppliers.forEach(s => supplierSlots.set(s.id, new Set()));
+  buyers.forEach(b => buyerSlots.set(b.id, new Set()));
+
+  const desiredMeetings = buildDesiredMeetings(suppliers, buyers);
+
+  // Assign meetings to slots (greedy - first available)
   for (const desired of desiredMeetings) {
     const supplierUsed = supplierSlots.get(desired.supplierId)!;
     const buyerUsed = buyerSlots.get(desired.buyerId)!;
@@ -92,6 +105,123 @@ export function generateSchedule(
       });
     }
   }
+
+  return { meetings, unscheduledPairs };
+}
+
+/**
+ * Spaced scheduling: distribute meetings evenly across all days
+ * Within each day, meetings can be clustered (greedy)
+ */
+function generateSpacedSchedule(
+  config: EventConfig,
+  timeSlots: TimeSlot[],
+  suppliers: Supplier[],
+  buyers: Buyer[]
+): { meetings: Meeting[]; unscheduledPairs: Array<{ supplierId: string; buyerId: string }> } {
+  const meetings: Meeting[] = [];
+  const unscheduledPairs: Array<{ supplierId: string; buyerId: string }> = [];
+
+  // Get all dates in the event
+  const dates = getDateRange(config.startDate, config.endDate);
+  const numDays = dates.length;
+
+  // Get non-break slots grouped by date
+  const slotsByDate: Map<string, TimeSlot[]> = new Map();
+  for (const date of dates) {
+    slotsByDate.set(date, timeSlots.filter(s => s.date === date && !s.isBreak));
+  }
+
+  // Track which slots are taken for each supplier and buyer
+  const supplierSlots: Map<string, Set<string>> = new Map();
+  const buyerSlots: Map<string, Set<string>> = new Map();
+
+  suppliers.forEach(s => supplierSlots.set(s.id, new Set()));
+  buyers.forEach(b => buyerSlots.set(b.id, new Set()));
+
+  // Track how many meetings each supplier has per day
+  const supplierMeetingsPerDay: Map<string, Map<string, number>> = new Map();
+  suppliers.forEach(s => {
+    const dayMap = new Map<string, number>();
+    dates.forEach(d => dayMap.set(d, 0));
+    supplierMeetingsPerDay.set(s.id, dayMap);
+  });
+
+  const desiredMeetings = buildDesiredMeetings(suppliers, buyers);
+
+  // Calculate target meetings per day for each supplier
+  const supplierTotalMeetings: Map<string, number> = new Map();
+  for (const supplier of suppliers) {
+    const total = desiredMeetings.filter(d => d.supplierId === supplier.id).length;
+    supplierTotalMeetings.set(supplier.id, total);
+  }
+
+  // Assign meetings, distributing across days
+  for (const desired of desiredMeetings) {
+    const supplierUsed = supplierSlots.get(desired.supplierId)!;
+    const buyerUsed = buyerSlots.get(desired.buyerId)!;
+    const supplierDayCount = supplierMeetingsPerDay.get(desired.supplierId)!;
+
+    const totalForSupplier = supplierTotalMeetings.get(desired.supplierId)!;
+    const targetPerDay = Math.ceil(totalForSupplier / numDays);
+
+    // Find the day with fewest meetings for this supplier that has available slots
+    let bestSlot: TimeSlot | null = null;
+    let bestDayCount = Infinity;
+
+    for (const date of dates) {
+      const currentDayCount = supplierDayCount.get(date)!;
+
+      // Skip this day if it's already at or above target (unless no better option)
+      if (currentDayCount >= targetPerDay && bestSlot !== null) {
+        continue;
+      }
+
+      const daySlots = slotsByDate.get(date)!;
+
+      // Find first available slot on this day
+      const availableSlot = daySlots.find(slot =>
+        !supplierUsed.has(slot.id) && !buyerUsed.has(slot.id)
+      );
+
+      if (availableSlot && currentDayCount < bestDayCount) {
+        bestSlot = availableSlot;
+        bestDayCount = currentDayCount;
+      }
+    }
+
+    if (bestSlot) {
+      meetings.push({
+        id: generateId(),
+        supplierId: desired.supplierId,
+        buyerId: desired.buyerId,
+        timeSlotId: bestSlot.id,
+        status: 'scheduled',
+      });
+      supplierUsed.add(bestSlot.id);
+      buyerUsed.add(bestSlot.id);
+      supplierDayCount.set(bestSlot.date, supplierDayCount.get(bestSlot.date)! + 1);
+    } else {
+      unscheduledPairs.push({
+        supplierId: desired.supplierId,
+        buyerId: desired.buyerId,
+      });
+    }
+  }
+
+  return { meetings, unscheduledPairs };
+}
+
+export function generateSchedule(
+  config: EventConfig,
+  suppliers: Supplier[],
+  buyers: Buyer[]
+): ScheduleResult {
+  const timeSlots = generateTimeSlots(config);
+
+  const { meetings, unscheduledPairs } = config.schedulingStrategy === 'spaced'
+    ? generateSpacedSchedule(config, timeSlots, suppliers, buyers)
+    : generateEfficientSchedule(timeSlots, suppliers, buyers);
 
   return { meetings, timeSlots, unscheduledPairs };
 }

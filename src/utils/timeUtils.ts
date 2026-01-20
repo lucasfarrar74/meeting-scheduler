@@ -1,5 +1,5 @@
 import type { TimeSlot, EventConfig } from '../types';
-import { parse, format, addMinutes, isBefore, isAfter } from 'date-fns';
+import { parse, format, addMinutes, addDays, isBefore, isAfter, parseISO } from 'date-fns';
 
 export function generateId(): string {
   return Math.random().toString(36).substring(2, 11);
@@ -17,9 +17,27 @@ export function formatTimeShort(date: Date): string {
   return format(date, 'HH:mm');
 }
 
-export function generateTimeSlots(config: EventConfig): TimeSlot[] {
+/**
+ * Get an array of date strings from startDate to endDate (inclusive)
+ */
+export function getDateRange(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  let current = parseISO(startDate);
+  const end = parseISO(endDate);
+
+  while (!isAfter(current, end)) {
+    dates.push(format(current, 'yyyy-MM-dd'));
+    current = addDays(current, 1);
+  }
+
+  return dates;
+}
+
+/**
+ * Generate time slots for a single day
+ */
+function generateDaySlots(eventDate: string, config: EventConfig): TimeSlot[] {
   const slots: TimeSlot[] = [];
-  const eventDate = config.date;
 
   let currentTime = parseTimeString(eventDate, config.startTime);
   const endTime = parseTimeString(eventDate, config.endTime);
@@ -50,6 +68,7 @@ export function generateTimeSlots(config: EventConfig): TimeSlot[] {
         if (isBefore(currentTime, slotEnd)) {
           slots.push({
             id: generateId(),
+            date: eventDate,
             startTime: currentTime,
             endTime: slotEnd,
             isBreak: false,
@@ -60,6 +79,7 @@ export function generateTimeSlots(config: EventConfig): TimeSlot[] {
       // Add the break slot
       slots.push({
         id: generateId(),
+        date: eventDate,
         startTime: breakStart,
         endTime: breakEnd,
         isBreak: true,
@@ -82,6 +102,7 @@ export function generateTimeSlots(config: EventConfig): TimeSlot[] {
         if (isBefore(currentTime, breakStart)) {
           slots.push({
             id: generateId(),
+            date: eventDate,
             startTime: currentTime,
             endTime: breakStart,
             isBreak: false,
@@ -92,6 +113,7 @@ export function generateTimeSlots(config: EventConfig): TimeSlot[] {
         const actualEnd = isBefore(slotEnd, endTime) ? slotEnd : endTime;
         slots.push({
           id: generateId(),
+          date: eventDate,
           startTime: currentTime,
           endTime: actualEnd,
           isBreak: false,
@@ -104,6 +126,46 @@ export function generateTimeSlots(config: EventConfig): TimeSlot[] {
   return slots.filter(slot => !slot.isBreak || slot.breakName);
 }
 
+/**
+ * Generate time slots for all days in the event
+ */
+export function generateTimeSlots(config: EventConfig): TimeSlot[] {
+  const dates = getDateRange(config.startDate, config.endDate);
+  const allSlots: TimeSlot[] = [];
+
+  for (const dateStr of dates) {
+    const daySlots = generateDaySlots(dateStr, config);
+    allSlots.push(...daySlots);
+  }
+
+  return allSlots;
+}
+
 export function getSlotDuration(slot: TimeSlot): number {
   return (slot.endTime.getTime() - slot.startTime.getTime()) / (1000 * 60);
+}
+
+/**
+ * Format a date string (YYYY-MM-DD) to a readable format
+ */
+export function formatDateReadable(dateStr: string): string {
+  return format(parseISO(dateStr), 'EEE, MMM d, yyyy');
+}
+
+/**
+ * Format a date range for display
+ */
+export function formatDateRange(startDate: string, endDate: string): string {
+  if (startDate === endDate) {
+    return formatDateReadable(startDate);
+  }
+  return `${format(parseISO(startDate), 'MMM d')} - ${format(parseISO(endDate), 'MMM d, yyyy')}`;
+}
+
+/**
+ * Get unique dates from time slots
+ */
+export function getUniqueDatesFromSlots(slots: TimeSlot[]): string[] {
+  const dates = new Set(slots.map(s => s.date));
+  return Array.from(dates).sort();
 }

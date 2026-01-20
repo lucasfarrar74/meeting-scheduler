@@ -68,7 +68,7 @@ function AppContent() {
                   <div className="text-right">
                     <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{activeProject.name}</p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {activeProject.eventConfig?.date || 'No date set'}
+                      {activeProject.eventConfig?.startDate || 'No date set'}
                     </p>
                   </div>
                 )}

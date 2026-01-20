@@ -17,7 +17,7 @@ import type {
   Project,
   AppState,
 } from '../types';
-import { isLegacySupplier, migrateSupplier } from '../types';
+import { isLegacySupplier, migrateSupplier, isLegacyEventConfig, migrateEventConfig } from '../types';
 import { autoFillCancelledSlots, bumpMeetingToLaterSlot, findNextAvailableSlotAfter } from '../utils/scheduler';
 import { assignBuyerColors } from '../utils/colors';
 
@@ -62,16 +62,25 @@ function migrateScheduleStateToProject(data: Record<string, unknown>): Project {
   }
 
   let timeSlots = (data.timeSlots as TimeSlot[]) ?? [];
-  // Restore Date objects
+  // Restore Date objects and add date field if missing
   if (timeSlots.length > 0) {
-    timeSlots = timeSlots.map(slot => ({
-      ...slot,
-      startTime: new Date(slot.startTime),
-      endTime: new Date(slot.endTime),
-    }));
+    timeSlots = timeSlots.map(slot => {
+      const startTime = new Date(slot.startTime);
+      return {
+        ...slot,
+        startTime,
+        endTime: new Date(slot.endTime),
+        // Add date field if missing (legacy data)
+        date: slot.date || startTime.toISOString().split('T')[0],
+      };
+    });
   }
 
-  const eventConfig = data.eventConfig as EventConfig | null;
+  // Migrate legacy EventConfig if needed
+  let eventConfig = data.eventConfig as EventConfig | null;
+  if (eventConfig && isLegacyEventConfig(eventConfig)) {
+    eventConfig = migrateEventConfig(eventConfig);
+  }
 
   return {
     id: generateId(),
@@ -95,15 +104,29 @@ function migrateAppState(data: unknown): AppState {
 
   // Check if this is new AppState format
   if (Array.isArray(rawData.projects)) {
-    // Already in AppState format, just restore Date objects
-    const projects = (rawData.projects as Project[]).map(project => ({
-      ...project,
-      timeSlots: project.timeSlots.map(slot => ({
-        ...slot,
-        startTime: new Date(slot.startTime),
-        endTime: new Date(slot.endTime),
-      })),
-    }));
+    // Already in AppState format, restore Date objects and migrate any legacy data
+    const projects = (rawData.projects as Project[]).map(project => {
+      // Migrate legacy EventConfig if needed
+      let eventConfig = project.eventConfig;
+      if (eventConfig && isLegacyEventConfig(eventConfig)) {
+        eventConfig = migrateEventConfig(eventConfig);
+      }
+
+      return {
+        ...project,
+        eventConfig,
+        timeSlots: project.timeSlots.map(slot => {
+          const startTime = new Date(slot.startTime);
+          return {
+            ...slot,
+            startTime,
+            endTime: new Date(slot.endTime),
+            // Add date field if missing (legacy data)
+            date: slot.date || startTime.toISOString().split('T')[0],
+          };
+        }),
+      };
+    });
 
     return {
       projects,
@@ -125,15 +148,27 @@ function migrateAppState(data: unknown): AppState {
   return initialAppState;
 }
 
-// Helper to restore TimeSlot dates in a project
+// Helper to restore TimeSlot dates in a project and migrate legacy data
 function restoreProjectDates(project: Project): Project {
+  // Migrate legacy EventConfig if needed
+  let eventConfig = project.eventConfig;
+  if (eventConfig && isLegacyEventConfig(eventConfig)) {
+    eventConfig = migrateEventConfig(eventConfig);
+  }
+
   return {
     ...project,
-    timeSlots: project.timeSlots.map(slot => ({
-      ...slot,
-      startTime: new Date(slot.startTime),
-      endTime: new Date(slot.endTime),
-    })),
+    eventConfig,
+    timeSlots: project.timeSlots.map(slot => {
+      const startTime = new Date(slot.startTime);
+      return {
+        ...slot,
+        startTime,
+        endTime: new Date(slot.endTime),
+        // Add date field if missing (legacy data)
+        date: slot.date || startTime.toISOString().split('T')[0],
+      };
+    }),
   };
 }
 

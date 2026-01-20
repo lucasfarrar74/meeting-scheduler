@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useSchedule } from '../context/ScheduleContext';
-import { formatTime } from '../utils/timeUtils';
+import { formatTime, getUniqueDatesFromSlots, formatDateReadable } from '../utils/timeUtils';
 import { createBuyerColorMap, getContrastTextColor, getLighterColor } from '../utils/colors';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useIsMobile } from '../hooks/useMediaQuery';
@@ -46,6 +46,7 @@ export default function SchedulePanel() {
     meetingId: string;
     targetSlotId: string;
   } | null>(null);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -82,8 +83,19 @@ export default function SchedulePanel() {
 
   const [showColorLegend, setShowColorLegend] = useState(true);
 
+  // Multi-day support: get unique dates and filter by selected day
+  const eventDates = useMemo(() => getUniqueDatesFromSlots(timeSlots), [timeSlots]);
+  const isMultiDay = eventDates.length > 1;
+  const currentDay = selectedDay || eventDates[0] || '';
+
+  // Filter time slots by selected day
+  const dayTimeSlots = useMemo(
+    () => isMultiDay ? timeSlots.filter(s => s.date === currentDay) : timeSlots,
+    [timeSlots, currentDay, isMultiDay]
+  );
+
   // Memoized filtered arrays
-  const meetingSlots = useMemo(() => timeSlots.filter(s => !s.isBreak), [timeSlots]);
+  const meetingSlots = useMemo(() => dayTimeSlots.filter(s => !s.isBreak), [dayTimeSlots]);
   const cancelledCount = useMemo(() => meetings.filter(m => m.status === 'cancelled').length, [meetings]);
   const scheduledCount = useMemo(() => meetings.filter(m => m.status === 'scheduled').length, [meetings]);
 
@@ -240,6 +252,31 @@ export default function SchedulePanel() {
           </div>
         )}
 
+        {/* Day Navigation for Multi-Day Events */}
+        {isMultiDay && meetings.length > 0 && (
+          <div className="mt-3 border-t border-gray-200 dark:border-gray-700 pt-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Day:</span>
+              {eventDates.map((date, index) => (
+                <button
+                  key={date}
+                  onClick={() => setSelectedDay(date)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    currentDay === date
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  Day {index + 1}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              {formatDateReadable(currentDay)}
+            </p>
+          </div>
+        )}
+
         {/* Buyer Color Legend */}
         {meetings.length > 0 && buyers.length > 0 && (
           <div className="mt-3 border-t border-gray-200 dark:border-gray-700 pt-3">
@@ -312,7 +349,7 @@ export default function SchedulePanel() {
                     </tr>
                   </thead>
                   <tbody>
-                    {timeSlots.map(slot => (
+                    {dayTimeSlots.map(slot => (
                       <tr key={slot.id} className={`border-b border-gray-200 dark:border-gray-700 ${slot.isBreak ? 'bg-yellow-50 dark:bg-yellow-900/20' : ''}`}>
                         <td className="px-3 py-2 font-medium text-gray-900 dark:text-gray-100 sticky left-0 bg-white dark:bg-gray-800 whitespace-nowrap">
                           {formatTime(slot.startTime)}

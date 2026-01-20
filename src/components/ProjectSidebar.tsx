@@ -167,8 +167,8 @@ export default function ProjectSidebar({ isCollapsed, onToggleCollapse }: Projec
                     )}
                   </div>
                   <p className="text-xs text-gray-400 mt-1">
-                    {project.eventConfig?.date
-                      ? format(new Date(project.eventConfig.date), 'MMM d, yyyy')
+                    {project.eventConfig?.startDate
+                      ? format(new Date(project.eventConfig.startDate), 'MMM d, yyyy')
                       : 'No date set'}
                   </p>
                 </div>
