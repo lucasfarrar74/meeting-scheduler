@@ -15,6 +15,7 @@ import {
   ShadingType,
   VerticalAlign,
   TableLayoutType,
+  PageBreak,
 } from 'docx';
 import { saveAs } from 'file-saver';
 import type { EventConfig, Supplier, Buyer, Meeting, TimeSlot } from '../types';
@@ -165,17 +166,28 @@ export async function exportSupplierScheduleToWord(data: ExportData): Promise<vo
 
   const sections: (Paragraph | Table)[] = [];
 
-  // Title
-  sections.push(
-    new Paragraph({
-      text: 'Schedule by Supplier',
-      heading: HeadingLevel.HEADING_1,
-      spacing: { after: 400 },
-    })
-  );
+  // Create table for each supplier (each on their own page)
+  for (let supplierIndex = 0; supplierIndex < suppliers.length; supplierIndex++) {
+    const supplier = suppliers[supplierIndex];
 
-  // Create table for each supplier
-  for (const supplier of suppliers) {
+    // Add page break before each supplier (except first)
+    if (supplierIndex > 0) {
+      sections.push(
+        new Paragraph({
+          children: [new PageBreak()],
+        })
+      );
+    }
+
+    // Title on each page
+    sections.push(
+      new Paragraph({
+        text: 'Schedule by Supplier',
+        heading: HeadingLevel.HEADING_1,
+        spacing: { after: 400 },
+      })
+    );
+
     // Supplier header
     sections.push(
       new Paragraph({
@@ -186,7 +198,7 @@ export async function exportSupplierScheduleToWord(data: ExportData): Promise<vo
             size: 26,
           }),
         ],
-        spacing: { before: 400, after: 100 },
+        spacing: { before: 200, after: 100 },
       })
     );
 
@@ -280,17 +292,28 @@ export async function exportBuyerScheduleToWord(data: ExportData): Promise<void>
 
   const sections: (Paragraph | Table)[] = [];
 
-  // Title
-  sections.push(
-    new Paragraph({
-      text: 'Schedule by Buyer',
-      heading: HeadingLevel.HEADING_1,
-      spacing: { after: 400 },
-    })
-  );
+  // Create table for each buyer (each on their own page)
+  for (let buyerIndex = 0; buyerIndex < buyers.length; buyerIndex++) {
+    const buyer = buyers[buyerIndex];
 
-  // Create table for each buyer
-  for (const buyer of buyers) {
+    // Add page break before each buyer (except first)
+    if (buyerIndex > 0) {
+      sections.push(
+        new Paragraph({
+          children: [new PageBreak()],
+        })
+      );
+    }
+
+    // Title on each page
+    sections.push(
+      new Paragraph({
+        text: 'Schedule by Buyer',
+        heading: HeadingLevel.HEADING_1,
+        spacing: { after: 400 },
+      })
+    );
+
     // Buyer header
     sections.push(
       new Paragraph({
@@ -301,7 +324,7 @@ export async function exportBuyerScheduleToWord(data: ExportData): Promise<void>
             size: 26,
           }),
         ],
-        spacing: { before: 400, after: 200 },
+        spacing: { before: 200, after: 200 },
       })
     );
 

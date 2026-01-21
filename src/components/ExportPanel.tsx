@@ -80,13 +80,14 @@ export default function ExportPanel() {
 
   const exportSupplierPDF = () => {
     const doc = new jsPDF();
-    let y = addPdfHeader(doc, 'Schedule by Supplier');
 
-    suppliers.forEach((supplier) => {
-      if (y > 250) {
+    suppliers.forEach((supplier, supplierIndex) => {
+      // Add new page for each supplier (except first)
+      if (supplierIndex > 0) {
         doc.addPage();
-        y = 25;
       }
+
+      let y = addPdfHeader(doc, 'Schedule by Supplier');
 
       // Supplier name with subtle background
       doc.setFillColor(243, 244, 246);
@@ -139,8 +140,6 @@ export default function ExportPanel() {
         doc.text(`${timeStr}: ${buyer?.name || '-'}`, 20, y);
         y += 5;
       });
-
-      y += 8;
     });
 
     addPdfFooter(doc);
@@ -149,13 +148,14 @@ export default function ExportPanel() {
 
   const exportBuyerPDF = () => {
     const doc = new jsPDF();
-    let y = addPdfHeader(doc, 'Schedule by Buyer');
 
-    buyers.forEach((buyer) => {
-      if (y > 250) {
+    buyers.forEach((buyer, buyerIndex) => {
+      // Add new page for each buyer (except first)
+      if (buyerIndex > 0) {
         doc.addPage();
-        y = 25;
       }
+
+      let y = addPdfHeader(doc, 'Schedule by Buyer');
 
       // Buyer name with subtle background
       doc.setFillColor(243, 244, 246);
@@ -191,8 +191,6 @@ export default function ExportPanel() {
         doc.text(`${timeStr}: ${supplier?.companyName || '-'}`, 20, y);
         y += 5;
       });
-
-      y += 8;
     });
 
     addPdfFooter(doc);
