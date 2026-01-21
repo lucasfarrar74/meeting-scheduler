@@ -163,7 +163,7 @@ export async function exportSupplierScheduleToWord(data: ExportData): Promise<vo
 
   const getBuyer = (id: string) => buyers.find(b => b.id === id);
 
-  const sections: Paragraph[] = [];
+  const sections: (Paragraph | Table)[] = [];
 
   // Title
   sections.push(
@@ -243,15 +243,11 @@ export async function exportSupplierScheduleToWord(data: ExportData): Promise<vo
     });
 
     sections.push(
-      new Paragraph({
-        children: [
-          new Table({
-            rows: [headerRow, ...dataRows],
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            layout: TableLayoutType.FIXED,
-          }),
-        ],
-      } as unknown as { children: Table[] })
+      new Table({
+        rows: [headerRow, ...dataRows],
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+      })
     );
   }
 
@@ -282,7 +278,7 @@ export async function exportBuyerScheduleToWord(data: ExportData): Promise<void>
 
   const getSupplier = (id: string) => suppliers.find(s => s.id === id);
 
-  const sections: Paragraph[] = [];
+  const sections: (Paragraph | Table)[] = [];
 
   // Title
   sections.push(
@@ -341,15 +337,11 @@ export async function exportBuyerScheduleToWord(data: ExportData): Promise<void>
     });
 
     sections.push(
-      new Paragraph({
-        children: [
-          new Table({
-            rows: [headerRow, ...dataRows],
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            layout: TableLayoutType.FIXED,
-          }),
-        ],
-      } as unknown as { children: Table[] })
+      new Table({
+        rows: [headerRow, ...dataRows],
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+      })
     );
   }
 
@@ -380,7 +372,7 @@ export async function exportMasterScheduleToWord(data: ExportData): Promise<void
 
   const getBuyer = (id: string) => buyers.find(b => b.id === id);
 
-  const sections: Paragraph[] = [];
+  const sections: (Paragraph | Table)[] = [];
 
   // Title
   sections.push(
@@ -438,15 +430,11 @@ export async function exportMasterScheduleToWord(data: ExportData): Promise<void
     });
 
     sections.push(
-      new Paragraph({
-        children: [
-          new Table({
-            rows: [headerRow, ...dataRows],
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            layout: TableLayoutType.FIXED,
-          }),
-        ],
-      } as unknown as { children: Table[] })
+      new Table({
+        rows: [headerRow, ...dataRows],
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+      })
     );
   }
 
