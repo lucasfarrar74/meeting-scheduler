@@ -440,7 +440,7 @@ export function getBuyerAvailabilityForSlot(
   const buyer = buyers.find(b => b.id === buyerId);
 
   if (!supplier || !buyer) {
-    return { available: false, conflictType: 'none', conflictDescription: 'Invalid supplier or buyer' };
+    return { available: false, conflictType: 'busy', conflictDescription: 'Invalid supplier or buyer' };
   }
 
   // Check if buyer is busy

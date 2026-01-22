@@ -84,6 +84,7 @@ export default function AddMeetingPanel({
 
     // Check for errors (hard blocks)
     if (currentConflicts?.hasErrors) {
+      setShowWarningConfirm(false);
       return;
     }
 

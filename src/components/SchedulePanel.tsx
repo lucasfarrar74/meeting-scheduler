@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { useSchedule } from '../context/ScheduleContext';
 import { formatTime, getUniqueDatesFromSlots, formatDateReadable } from '../utils/timeUtils';
 import { createBuyerColorMap, getContrastTextColor, getLighterColor } from '../utils/colors';
@@ -12,6 +12,7 @@ import MobileScheduleView from './MobileScheduleView';
 import ConflictSummaryPanel from './ConflictSummaryPanel';
 import ConflictWarningModal from './ConflictWarningModal';
 import AddMeetingPanel from './AddMeetingPanel';
+import CrossDayMoveModal from './CrossDayMoveModal';
 import type { Meeting, Buyer, ConflictInfo } from '../types';
 import {
   DndContext,
@@ -253,6 +254,15 @@ export default function SchedulePanel() {
   // Highlighted meeting for conflict resolution
   const [highlightedMeetingId, setHighlightedMeetingId] = useState<string | null>(null);
 
+  // Cross-day move state
+  const [crossDayMove, setCrossDayMove] = useState<{
+    meetingId: string;
+    targetDate: string;
+  } | null>(null);
+
+  // Ref for highlight timeout to prevent stale closures
+  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // Drag and drop state
   const [activeDragMeeting, setActiveDragMeeting] = useState<Meeting | null>(null);
 
@@ -374,8 +384,12 @@ export default function SchedulePanel() {
     // Slot IDs are formatted as "slot-{supplierId}-{slotId}"
     if (overId.startsWith('slot-')) {
       const parts = overId.split('-');
+      // Validate we have at least 3 parts: "slot", supplierId, and slotId
+      if (parts.length < 3) return;
       const targetSupplierId = parts[1];
       const targetSlotId = parts.slice(2).join('-');
+      // Validate both IDs are present
+      if (!targetSupplierId || !targetSlotId) return;
 
       // Only allow dropping within the same supplier column
       if (targetSupplierId === draggedMeeting.supplierId) {
@@ -487,9 +501,13 @@ export default function SchedulePanel() {
 
   // Handler for highlighting meeting (from conflict panel)
   const handleHighlightMeeting = useCallback((meetingId: string) => {
+    // Clear any existing timeout to prevent stale closures
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+    }
     setHighlightedMeetingId(meetingId);
     // Clear highlight after a few seconds
-    setTimeout(() => setHighlightedMeetingId(null), 3000);
+    highlightTimeoutRef.current = setTimeout(() => setHighlightedMeetingId(null), 3000);
   }, []);
 
   // Close slot dropdown when clicking outside
@@ -836,6 +854,29 @@ export default function SchedulePanel() {
                                                 ➡️ Bump to Later Slot
                                               </button>
                                             )}
+                                            {/* Move to Day submenu - only show for multi-day events */}
+                                            {isMultiDay && (
+                                              <div className="relative group/moveday">
+                                                <button className="w-full px-3 py-2 text-left text-xs hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-400 flex items-center justify-between">
+                                                  <span>📅 Move to Day</span>
+                                                  <span className="text-[10px]">▶</span>
+                                                </button>
+                                                <div className="absolute left-full top-0 ml-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg hidden group-hover/moveday:block min-w-32 z-20">
+                                                  {eventDates.filter(d => d !== currentDay).map((date) => (
+                                                    <button
+                                                      key={date}
+                                                      onClick={() => {
+                                                        setCrossDayMove({ meetingId: meeting.id, targetDate: date });
+                                                        setActiveMeetingMenu(null);
+                                                      }}
+                                                      className="w-full px-3 py-2 text-left text-xs hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-400"
+                                                    >
+                                                      Day {eventDates.indexOf(date) + 1} ({formatDateReadable(date)})
+                                                    </button>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            )}
                                           </div>
                                           <div className="border-t border-gray-200 dark:border-gray-700">
                                             <button
@@ -1114,6 +1155,19 @@ export default function SchedulePanel() {
           onConfirm={conflictModal.onConfirm}
           showConfirm={!!conflictModal.onConfirm}
           confirmText="Proceed Anyway"
+        />
+      )}
+
+      {/* Cross-Day Move Modal */}
+      {crossDayMove && (
+        <CrossDayMoveModal
+          meetingId={crossDayMove.meetingId}
+          targetDate={crossDayMove.targetDate}
+          onClose={() => setCrossDayMove(null)}
+          onMove={(targetSlotId) => {
+            moveMeeting(crossDayMove.meetingId, targetSlotId);
+            setCrossDayMove(null);
+          }}
         />
       )}
 
