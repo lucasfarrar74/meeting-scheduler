@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import { useFirebaseSync } from '../hooks/useFirebaseSync';
+import { useFirebaseSync, useSyncProjectChanges } from '../hooks/useFirebaseSync';
 import { useHistoryTracker } from '../hooks/useHistory';
 import type {
   ScheduleState,
@@ -156,19 +156,28 @@ function restoreProjectDates(project: Project): Project {
     eventConfig = migrateEventConfig(eventConfig);
   }
 
+  // Safely restore timeSlots with Date objects
+  const timeSlots = (project.timeSlots || []).map(slot => {
+    const startTime = new Date(slot.startTime);
+    return {
+      ...slot,
+      startTime,
+      endTime: new Date(slot.endTime),
+      // Add date field if missing (legacy data)
+      date: slot.date || startTime.toISOString().split('T')[0],
+    };
+  });
+
+  // Preserve all project data including meetings
   return {
     ...project,
     eventConfig,
-    timeSlots: project.timeSlots.map(slot => {
-      const startTime = new Date(slot.startTime);
-      return {
-        ...slot,
-        startTime,
-        endTime: new Date(slot.endTime),
-        // Add date field if missing (legacy data)
-        date: slot.date || startTime.toISOString().split('T')[0],
-      };
-    }),
+    timeSlots,
+    // Explicitly preserve arrays to ensure they're not lost
+    meetings: project.meetings || [],
+    suppliers: project.suppliers || [],
+    buyers: project.buyers || [],
+    unscheduledPairs: project.unscheduledPairs || [],
   };
 }
 
@@ -252,21 +261,60 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     }
   }, [activeProject, syncProject, stopSync]);
 
-  // Helper to update the active project
+  // Cloud sync: Push local changes to Firebase
+  const syncChangesToCloud = useSyncProjectChanges(activeProject, syncStatus);
+  const syncDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounced sync function to avoid excessive Firebase writes
+  const debouncedSyncToCloud = useCallback((project: Project) => {
+    if (!project.isCloud || !project.shareId || syncStatus !== 'synced') {
+      return;
+    }
+
+    // Clear existing timeout
+    if (syncDebounceRef.current) {
+      clearTimeout(syncDebounceRef.current);
+    }
+
+    // Debounce: wait 500ms before syncing
+    syncDebounceRef.current = setTimeout(() => {
+      syncChangesToCloud(project);
+    }, 500);
+  }, [syncStatus, syncChangesToCloud]);
+
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (syncDebounceRef.current) {
+        clearTimeout(syncDebounceRef.current);
+      }
+    };
+  }, []);
+
+  // Helper to update the active project (with cloud sync)
   const updateActiveProject = useCallback((updater: (project: Project) => Project) => {
     setAppState(prev => {
       if (!prev.activeProjectId) return prev;
       const now = new Date().toISOString();
+
+      const currentProject = prev.projects.find(p => p.id === prev.activeProjectId);
+      if (!currentProject) return prev;
+
+      const updatedProject = { ...updater(currentProject), updatedAt: now };
+
+      // Trigger cloud sync for cloud projects
+      if (updatedProject.isCloud && updatedProject.shareId) {
+        debouncedSyncToCloud(updatedProject);
+      }
+
       return {
         ...prev,
         projects: prev.projects.map(p =>
-          p.id === prev.activeProjectId
-            ? { ...updater(p), updatedAt: now }
-            : p
+          p.id === prev.activeProjectId ? updatedProject : p
         ),
       };
     });
-  }, [setAppState]);
+  }, [setAppState, debouncedSyncToCloud]);
 
   // Save current state to history before making changes
   const saveToHistory = useCallback(() => {
@@ -682,19 +730,38 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     try {
       const parsed = JSON.parse(json);
 
+      // Debug logging for import tracing
+      console.log('[Import] Parsed data:', {
+        hasId: !!parsed.id,
+        hasName: !!parsed.name,
+        hasCreatedAt: !!parsed.createdAt,
+        meetingsCount: parsed.meetings?.length ?? 0,
+        timeSlotsCount: parsed.timeSlots?.length ?? 0,
+        suppliersCount: parsed.suppliers?.length ?? 0,
+        buyersCount: parsed.buyers?.length ?? 0,
+      });
+
       // Check if it's a Project or old ScheduleState format
       if (parsed.id && parsed.name && parsed.createdAt) {
         // It's a Project - restore dates and add/replace
         const project = restoreProjectDates(parsed as Project);
+
+        console.log('[Import] Restored project:', {
+          meetingsCount: project.meetings?.length ?? 0,
+          timeSlotsCount: project.timeSlots?.length ?? 0,
+        });
+
         setAppState(prev => {
           const existingIndex = prev.projects.findIndex(p => p.id === project.id);
           if (existingIndex >= 0) {
             // Replace existing project
             const newProjects = [...prev.projects];
             newProjects[existingIndex] = project;
+            console.log('[Import] Replacing existing project at index', existingIndex);
             return { ...prev, projects: newProjects, activeProjectId: project.id };
           } else {
             // Add new project
+            console.log('[Import] Adding new project');
             return {
               ...prev,
               projects: [...prev.projects, project],
@@ -705,6 +772,9 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
       } else {
         // Old format - migrate to project and add
         const project = migrateScheduleStateToProject(parsed);
+        console.log('[Import] Migrated from old format:', {
+          meetingsCount: project.meetings?.length ?? 0,
+        });
         setAppState(prev => ({
           ...prev,
           projects: [...prev.projects, project],

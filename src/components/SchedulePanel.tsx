@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useSchedule } from '../context/ScheduleContext';
 import { formatTime, getUniqueDatesFromSlots, formatDateReadable } from '../utils/timeUtils';
 import { createBuyerColorMap, getContrastTextColor, getLighterColor } from '../utils/colors';
@@ -8,9 +8,151 @@ import StatusDashboard from './StatusDashboard';
 import ActivityFeed from './ActivityFeed';
 import BumpPreviewModal from './BumpPreviewModal';
 import MobileScheduleView from './MobileScheduleView';
-import type { Meeting } from '../types';
+import type { Meeting, Buyer } from '../types';
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+  useDraggable,
+  useDroppable,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
 
 type ViewMode = 'grid' | 'supplier' | 'buyer';
+
+// Droppable slot component for empty cells and cells with meetings
+function DroppableSlot({
+  id,
+  isEmpty,
+  children,
+}: {
+  id: string;
+  isEmpty: boolean;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id,
+    data: { type: 'slot', isEmpty },
+  });
+
+  return (
+    <td
+      ref={setNodeRef}
+      className={`px-3 py-2 relative transition-colors ${
+        isOver && isEmpty ? 'bg-blue-100 dark:bg-blue-900/30' : ''
+      }`}
+    >
+      {children}
+    </td>
+  );
+}
+
+// Draggable meeting cell component
+function DraggableMeeting({
+  meeting,
+  buyer,
+  buyerColorMap,
+  isMenuOpen,
+  onToggleMenu,
+  children,
+}: {
+  meeting: Meeting;
+  buyer: Buyer;
+  buyerColorMap: Map<string, string>;
+  isMenuOpen: boolean;
+  onToggleMenu: () => void;
+  children?: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: meeting.id,
+  });
+
+  const style = transform
+    ? {
+        transform: CSS.Translate.toString(transform),
+        opacity: isDragging ? 0.5 : 1,
+      }
+    : undefined;
+
+  const buyerColor = buyerColorMap.get(buyer.id) || '#3B82F6';
+
+  // Determine colors based on status
+  let bgColor: string;
+  let textColor: string;
+  let borderColor: string;
+  let pulseClass = '';
+  let statusIcon = '';
+
+  switch (meeting.status) {
+    case 'completed':
+      bgColor = getLighterColor(buyerColor, 0.7);
+      borderColor = buyerColor;
+      statusIcon = '✓';
+      break;
+    case 'in_progress':
+      bgColor = getLighterColor('#3B82F6', 0.8);
+      borderColor = '#3B82F6';
+      pulseClass = 'animate-pulse';
+      statusIcon = '▶';
+      break;
+    case 'running_late':
+      bgColor = getLighterColor('#EF4444', 0.85);
+      borderColor = '#EF4444';
+      pulseClass = 'animate-pulse';
+      statusIcon = '🔴';
+      break;
+    case 'delayed':
+      bgColor = getLighterColor('#F59E0B', 0.85);
+      borderColor = '#F59E0B';
+      statusIcon = '⏳';
+      break;
+    default:
+      bgColor = getLighterColor(buyerColor, 0.85);
+      borderColor = buyerColor;
+      statusIcon = '';
+  }
+
+  textColor = getContrastTextColor(bgColor);
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative">
+      <div
+        {...attributes}
+        {...listeners}
+        className={`p-2 rounded text-xs cursor-grab active:cursor-grabbing border-l-4 ${pulseClass} ${
+          isDragging ? 'shadow-lg ring-2 ring-blue-400' : ''
+        }`}
+        style={{
+          backgroundColor: bgColor,
+          color: textColor,
+          borderLeftColor: borderColor,
+        }}
+        onClick={(e) => {
+          // Don't toggle menu if we're in the middle of a drag
+          if (!isDragging) {
+            e.stopPropagation();
+            onToggleMenu();
+          }
+        }}
+        title={meeting.delayReason ? `Delay reason: ${meeting.delayReason}` : 'Drag to move'}
+      >
+        <div className="flex items-center justify-between gap-1">
+          <span className="font-medium">{buyer.name}</span>
+          {statusIcon && <span className="text-[10px]">{statusIcon}</span>}
+        </div>
+        <div className="text-[10px] opacity-80">{buyer.organization}</div>
+        {meeting.originalTimeSlotId && (
+          <div className="text-[9px] opacity-60 mt-0.5">↪ Rescheduled</div>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
 
 export default function SchedulePanel() {
   const {
@@ -31,6 +173,8 @@ export default function SchedulePanel() {
     startMeeting,
     bumpMeeting,
     findNextAvailableSlot,
+    moveMeeting,
+    swapMeetings,
     undo,
     redo,
     canUndo,
@@ -47,6 +191,18 @@ export default function SchedulePanel() {
     targetSlotId: string;
   } | null>(null);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+
+  // Drag and drop state
+  const [activeDragMeeting, setActiveDragMeeting] = useState<Meeting | null>(null);
+
+  // Configure drag sensors - require a small movement before drag starts
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 8px movement required to start drag
+      },
+    })
+  );
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -108,6 +264,54 @@ export default function SchedulePanel() {
 
   const getBuyer = (id: string) => buyerMap.get(id);
   const getSupplier = (id: string) => supplierMap.get(id);
+
+  // Drag and drop handlers
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const meetingId = event.active.id as string;
+    const meeting = meetings.find(m => m.id === meetingId);
+    if (meeting) {
+      setActiveDragMeeting(meeting);
+      setActiveMeetingMenu(null); // Close any open menus
+    }
+  }, [meetings]);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveDragMeeting(null);
+
+    if (!over) return;
+
+    const draggedMeetingId = active.id as string;
+    const draggedMeeting = meetings.find(m => m.id === draggedMeetingId);
+    if (!draggedMeeting) return;
+
+    const overId = over.id as string;
+
+    // Check if dropping on another meeting (swap)
+    const targetMeeting = meetings.find(m => m.id === overId);
+    if (targetMeeting) {
+      // Swap meetings
+      swapMeetings(draggedMeetingId, targetMeeting.id);
+      return;
+    }
+
+    // Check if dropping on an empty slot
+    // Slot IDs are formatted as "slot-{supplierId}-{slotId}"
+    if (overId.startsWith('slot-')) {
+      const parts = overId.split('-');
+      const targetSupplierId = parts[1];
+      const targetSlotId = parts.slice(2).join('-');
+
+      // Only allow dropping within the same supplier column
+      if (targetSupplierId === draggedMeeting.supplierId) {
+        // Check if slot is empty
+        const existingMeeting = getMeetingForSlot(targetSupplierId, targetSlotId);
+        if (!existingMeeting) {
+          moveMeeting(draggedMeetingId, targetSlotId);
+        }
+      }
+    }
+  }, [meetings, swapMeetings, moveMeeting, getMeetingForSlot]);
 
   if (!eventConfig) {
     return (
@@ -336,240 +540,211 @@ export default function SchedulePanel() {
                 }}
               />
             ) : viewMode === 'grid' ? (
-              <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
-                      <th className="px-3 py-2 text-left font-medium text-gray-900 dark:text-gray-100 sticky left-0 bg-gray-50 dark:bg-gray-700">Time</th>
-                      {suppliers.map(s => (
-                        <th key={s.id} className="px-3 py-2 text-left font-medium text-gray-900 dark:text-gray-100 min-w-32">
-                          {s.companyName}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dayTimeSlots.map(slot => (
-                      <tr key={slot.id} className={`border-b border-gray-200 dark:border-gray-700 ${slot.isBreak ? 'bg-yellow-50 dark:bg-yellow-900/20' : ''}`}>
-                        <td className="px-3 py-2 font-medium text-gray-900 dark:text-gray-100 sticky left-0 bg-white dark:bg-gray-800 whitespace-nowrap">
-                          {formatTime(slot.startTime)}
-                          {slot.isBreak && (
-                            <span className="ml-2 text-xs text-yellow-700 dark:text-yellow-400">({slot.breakName})</span>
-                          )}
-                        </td>
-                        {slot.isBreak ? (
-                          <td colSpan={suppliers.length} className="px-3 py-2 text-center text-yellow-700 dark:text-yellow-400">
-                            {slot.breakName}
+              <DndContext
+                sensors={sensors}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+              >
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
+                        <th className="px-3 py-2 text-left font-medium text-gray-900 dark:text-gray-100 sticky left-0 bg-gray-50 dark:bg-gray-700">Time</th>
+                        {suppliers.map(s => (
+                          <th key={s.id} className="px-3 py-2 text-left font-medium text-gray-900 dark:text-gray-100 min-w-32">
+                            {s.companyName}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dayTimeSlots.map(slot => (
+                        <tr key={slot.id} className={`border-b border-gray-200 dark:border-gray-700 ${slot.isBreak ? 'bg-yellow-50 dark:bg-yellow-900/20' : ''}`}>
+                          <td className="px-3 py-2 font-medium text-gray-900 dark:text-gray-100 sticky left-0 bg-white dark:bg-gray-800 whitespace-nowrap">
+                            {formatTime(slot.startTime)}
+                            {slot.isBreak && (
+                              <span className="ml-2 text-xs text-yellow-700 dark:text-yellow-400">({slot.breakName})</span>
+                            )}
                           </td>
-                        ) : (
-                          suppliers.map(supplier => {
-                            const meeting = getMeetingForSlot(supplier.id, slot.id);
-                            const buyer = meeting ? getBuyer(meeting.buyerId) : null;
-                            return (
-                              <td key={supplier.id} className="px-3 py-2 relative">
-                                {meeting && buyer ? (
-                                  <div className="relative">
-                                    {(() => {
-                                      const buyerColor = buyerColorMap.get(buyer.id) || '#3B82F6';
-
-                                      // Determine colors based on status
-                                      let bgColor: string;
-                                      let textColor: string;
-                                      let borderColor: string;
-                                      let pulseClass = '';
-                                      let statusIcon = '';
-
-                                      switch (meeting.status) {
-                                        case 'completed':
-                                          bgColor = getLighterColor(buyerColor, 0.7);
-                                          borderColor = buyerColor;
-                                          statusIcon = '✓';
-                                          break;
-                                        case 'in_progress':
-                                          bgColor = getLighterColor('#3B82F6', 0.8);
-                                          borderColor = '#3B82F6';
-                                          pulseClass = 'animate-pulse';
-                                          statusIcon = '▶';
-                                          break;
-                                        case 'running_late':
-                                          bgColor = getLighterColor('#EF4444', 0.85);
-                                          borderColor = '#EF4444';
-                                          pulseClass = 'animate-pulse';
-                                          statusIcon = '🔴';
-                                          break;
-                                        case 'delayed':
-                                          bgColor = getLighterColor('#F59E0B', 0.85);
-                                          borderColor = '#F59E0B';
-                                          statusIcon = '⏳';
-                                          break;
-                                        default:
-                                          bgColor = getLighterColor(buyerColor, 0.85);
-                                          borderColor = buyerColor;
-                                          statusIcon = '';
-                                      }
-
-                                      textColor = getContrastTextColor(bgColor);
-
-                                      return (
-                                        <div
-                                          className={`p-2 rounded text-xs cursor-pointer border-l-4 ${pulseClass}`}
-                                          style={{
-                                            backgroundColor: bgColor,
-                                            color: textColor,
-                                            borderLeftColor: borderColor,
-                                          }}
-                                          onClick={() => setActiveMeetingMenu(activeMeetingMenu === meeting.id ? null : meeting.id)}
-                                          title={meeting.delayReason ? `Delay reason: ${meeting.delayReason}` : undefined}
-                                        >
-                                          <div className="flex items-center justify-between gap-1">
-                                            <span className="font-medium">{buyer.name}</span>
-                                            {statusIcon && (
-                                              <span className="text-[10px]">{statusIcon}</span>
+                          {slot.isBreak ? (
+                            <td colSpan={suppliers.length} className="px-3 py-2 text-center text-yellow-700 dark:text-yellow-400">
+                              {slot.breakName}
+                            </td>
+                          ) : (
+                            suppliers.map(supplier => {
+                              const meeting = getMeetingForSlot(supplier.id, slot.id);
+                              const buyer = meeting ? getBuyer(meeting.buyerId) : null;
+                              return (
+                                <DroppableSlot
+                                  key={supplier.id}
+                                  id={`slot-${supplier.id}-${slot.id}`}
+                                  isEmpty={!meeting}
+                                >
+                                  {meeting && buyer ? (
+                                    <DraggableMeeting
+                                      meeting={meeting}
+                                      buyer={buyer}
+                                      buyerColorMap={buyerColorMap}
+                                      isMenuOpen={activeMeetingMenu === meeting.id}
+                                      onToggleMenu={() => setActiveMeetingMenu(activeMeetingMenu === meeting.id ? null : meeting.id)}
+                                    >
+                                      {/* Meeting action menu */}
+                                      {activeMeetingMenu === meeting.id && (
+                                        <div className="absolute z-10 mt-1 left-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-40">
+                                          {meeting.status === 'scheduled' && (
+                                            <button
+                                              onClick={() => { startMeeting(meeting.id); setActiveMeetingMenu(null); }}
+                                              className="w-full px-3 py-2 text-left text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-700 dark:text-blue-400"
+                                            >
+                                              ▶ Start Meeting
+                                            </button>
+                                          )}
+                                          {(meeting.status === 'scheduled' || meeting.status === 'in_progress') && (
+                                            <button
+                                              onClick={() => { updateMeetingStatus(meeting.id, 'completed'); setActiveMeetingMenu(null); }}
+                                              className="w-full px-3 py-2 text-left text-xs hover:bg-green-50 dark:hover:bg-green-900/30 text-green-700 dark:text-green-400"
+                                            >
+                                              ✓ Mark Completed
+                                            </button>
+                                          )}
+                                          <div className="border-t border-gray-200 dark:border-gray-700">
+                                            {meeting.status === 'in_progress' && (
+                                              <button
+                                                onClick={() => { markMeetingRunningLate(meeting.id); setActiveMeetingMenu(null); }}
+                                                className="w-full px-3 py-2 text-left text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-700 dark:text-red-400"
+                                              >
+                                                🔴 Running Late
+                                              </button>
+                                            )}
+                                            {(meeting.status === 'scheduled' || meeting.status === 'delayed') && (
+                                              <button
+                                                onClick={() => { setDelayReasonInput(meeting.id); }}
+                                                className="w-full px-3 py-2 text-left text-xs hover:bg-yellow-50 dark:hover:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+                                              >
+                                                ⏳ Mark Delayed
+                                              </button>
+                                            )}
+                                            {(meeting.status === 'scheduled' || meeting.status === 'delayed' || meeting.status === 'running_late') && (
+                                              <button
+                                                onClick={() => {
+                                                  const targetSlotId = findNextAvailableSlot(meeting.id);
+                                                  if (targetSlotId) {
+                                                    setBumpPreview({ meetingId: meeting.id, targetSlotId });
+                                                    setActiveMeetingMenu(null);
+                                                  } else {
+                                                    alert('No available slots later in the day');
+                                                    setActiveMeetingMenu(null);
+                                                  }
+                                                }}
+                                                className="w-full px-3 py-2 text-left text-xs hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-400"
+                                              >
+                                                ➡️ Bump to Later Slot
+                                              </button>
                                             )}
                                           </div>
-                                          <div className="text-[10px] opacity-80">{buyer.organization}</div>
-                                          {meeting.originalTimeSlotId && (
-                                            <div className="text-[9px] opacity-60 mt-0.5">↪ Rescheduled</div>
-                                          )}
-                                        </div>
-                                      );
-                                    })()}
-                                    {activeMeetingMenu === meeting.id && (
-                                      <div className="absolute z-10 mt-1 left-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-40">
-                                        {/* Status actions */}
-                                        {meeting.status === 'scheduled' && (
-                                          <button
-                                            onClick={() => { startMeeting(meeting.id); setActiveMeetingMenu(null); }}
-                                            className="w-full px-3 py-2 text-left text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-700 dark:text-blue-400"
-                                          >
-                                            ▶ Start Meeting
-                                          </button>
-                                        )}
-                                        {(meeting.status === 'scheduled' || meeting.status === 'in_progress') && (
-                                          <button
-                                            onClick={() => { updateMeetingStatus(meeting.id, 'completed'); setActiveMeetingMenu(null); }}
-                                            className="w-full px-3 py-2 text-left text-xs hover:bg-green-50 dark:hover:bg-green-900/30 text-green-700 dark:text-green-400"
-                                          >
-                                            ✓ Mark Completed
-                                          </button>
-                                        )}
-
-                                        {/* Delay options */}
-                                        <div className="border-t border-gray-200 dark:border-gray-700">
-                                          {meeting.status === 'in_progress' && (
+                                          <div className="border-t border-gray-200 dark:border-gray-700">
                                             <button
-                                              onClick={() => { markMeetingRunningLate(meeting.id); setActiveMeetingMenu(null); }}
+                                              onClick={() => { updateMeetingStatus(meeting.id, 'scheduled'); setActiveMeetingMenu(null); }}
+                                              className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+                                            >
+                                              ↺ Reset Status
+                                            </button>
+                                            <button
+                                              onClick={() => { cancelMeeting(meeting.id); setActiveMeetingMenu(null); }}
                                               className="w-full px-3 py-2 text-left text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-700 dark:text-red-400"
                                             >
-                                              🔴 Running Late
+                                              ✕ Cancel Meeting
                                             </button>
-                                          )}
-                                          {(meeting.status === 'scheduled' || meeting.status === 'delayed') && (
-                                            <button
-                                              onClick={() => { setDelayReasonInput(meeting.id); }}
-                                              className="w-full px-3 py-2 text-left text-xs hover:bg-yellow-50 dark:hover:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
-                                            >
-                                              ⏳ Mark Delayed
-                                            </button>
-                                          )}
-                                          {(meeting.status === 'scheduled' || meeting.status === 'delayed' || meeting.status === 'running_late') && (
+                                          </div>
+                                        </div>
+                                      )}
+                                      {/* Delay reason input */}
+                                      {delayReasonInput === meeting.id && (
+                                        <div className="absolute z-20 mt-1 left-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg p-3 min-w-48">
+                                          <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Reason for delay:</p>
+                                          <input
+                                            type="text"
+                                            value={delayReason}
+                                            onChange={(e) => setDelayReason(e.target.value)}
+                                            placeholder="e.g., Buyer running late"
+                                            className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded mb-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                            autoFocus
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                markMeetingDelayed(meeting.id, delayReason || undefined);
+                                                setDelayReasonInput(null);
+                                                setDelayReason('');
+                                                setActiveMeetingMenu(null);
+                                              }
+                                              if (e.key === 'Escape') {
+                                                setDelayReasonInput(null);
+                                                setDelayReason('');
+                                              }
+                                            }}
+                                          />
+                                          <div className="flex gap-2">
                                             <button
                                               onClick={() => {
-                                                const targetSlotId = findNextAvailableSlot(meeting.id);
-                                                if (targetSlotId) {
-                                                  setBumpPreview({ meetingId: meeting.id, targetSlotId });
-                                                  setActiveMeetingMenu(null);
-                                                } else {
-                                                  alert('No available slots later in the day for both supplier and buyer');
-                                                  setActiveMeetingMenu(null);
-                                                }
+                                                markMeetingDelayed(meeting.id, delayReason || undefined);
+                                                setDelayReasonInput(null);
+                                                setDelayReason('');
+                                                setActiveMeetingMenu(null);
                                               }}
-                                              className="w-full px-3 py-2 text-left text-xs hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-400"
+                                              className="flex-1 px-2 py-1 text-xs bg-yellow-500 text-white rounded hover:bg-yellow-600"
                                             >
-                                              ➡️ Bump to Later Slot
+                                              Confirm
                                             </button>
-                                          )}
+                                            <button
+                                              onClick={() => {
+                                                setDelayReasonInput(null);
+                                                setDelayReason('');
+                                              }}
+                                              className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded"
+                                            >
+                                              Cancel
+                                            </button>
+                                          </div>
                                         </div>
+                                      )}
+                                    </DraggableMeeting>
+                                  ) : (
+                                    <span className="text-gray-300 dark:text-gray-600">-</span>
+                                  )}
+                                </DroppableSlot>
+                              );
+                            })
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-                                        {/* Reset and cancel */}
-                                        <div className="border-t border-gray-200 dark:border-gray-700">
-                                          <button
-                                            onClick={() => { updateMeetingStatus(meeting.id, 'scheduled'); setActiveMeetingMenu(null); }}
-                                            className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
-                                          >
-                                            ↺ Reset Status
-                                          </button>
-                                          <button
-                                            onClick={() => { cancelMeeting(meeting.id); setActiveMeetingMenu(null); }}
-                                            className="w-full px-3 py-2 text-left text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-700 dark:text-red-400"
-                                          >
-                                            ✕ Cancel Meeting
-                                          </button>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Delay reason input dialog */}
-                                    {delayReasonInput === meeting.id && (
-                                      <div className="absolute z-20 mt-1 left-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg p-3 min-w-48">
-                                        <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Reason for delay (optional):</p>
-                                        <input
-                                          type="text"
-                                          value={delayReason}
-                                          onChange={(e) => setDelayReason(e.target.value)}
-                                          placeholder="e.g., Buyer running late"
-                                          className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded mb-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                                          autoFocus
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              markMeetingDelayed(meeting.id, delayReason || undefined);
-                                              setDelayReasonInput(null);
-                                              setDelayReason('');
-                                              setActiveMeetingMenu(null);
-                                            }
-                                            if (e.key === 'Escape') {
-                                              setDelayReasonInput(null);
-                                              setDelayReason('');
-                                            }
-                                          }}
-                                        />
-                                        <div className="flex gap-2">
-                                          <button
-                                            onClick={() => {
-                                              markMeetingDelayed(meeting.id, delayReason || undefined);
-                                              setDelayReasonInput(null);
-                                              setDelayReason('');
-                                              setActiveMeetingMenu(null);
-                                            }}
-                                            className="flex-1 px-2 py-1 text-xs bg-yellow-500 text-white rounded hover:bg-yellow-600"
-                                          >
-                                            Confirm
-                                          </button>
-                                          <button
-                                            onClick={() => {
-                                              setDelayReasonInput(null);
-                                              setDelayReason('');
-                                            }}
-                                            className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
-                                          >
-                                            Cancel
-                                          </button>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-gray-300 dark:text-gray-600">-</span>
-                                )}
-                              </td>
-                            );
-                          })
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                {/* Drag Overlay - shows what's being dragged */}
+                <DragOverlay>
+                  {activeDragMeeting && (() => {
+                    const buyer = getBuyer(activeDragMeeting.buyerId);
+                    if (!buyer) return null;
+                    const buyerColor = buyerColorMap.get(buyer.id) || '#3B82F6';
+                    const bgColor = getLighterColor(buyerColor, 0.85);
+                    const textColor = getContrastTextColor(bgColor);
+                    return (
+                      <div
+                        className="p-2 rounded text-xs border-l-4 shadow-lg opacity-90"
+                        style={{
+                          backgroundColor: bgColor,
+                          color: textColor,
+                          borderLeftColor: buyerColor,
+                          minWidth: '100px',
+                        }}
+                      >
+                        <div className="font-medium">{buyer.name}</div>
+                        <div className="text-[10px] opacity-80">{buyer.organization}</div>
+                      </div>
+                    );
+                  })()}
+                </DragOverlay>
+              </DndContext>
             ) : viewMode === 'supplier' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {suppliers.map(supplier => (

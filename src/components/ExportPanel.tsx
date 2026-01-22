@@ -427,11 +427,22 @@ export default function ExportPanel() {
 
   const handleExportJSON = () => {
     const json = exportToJSON();
+    const parsed = JSON.parse(json);
+
+    // Log what's being exported for debugging
+    console.log('[Export] Exporting project:', {
+      name: parsed.name,
+      meetingsCount: parsed.meetings?.length ?? 0,
+      timeSlotsCount: parsed.timeSlots?.length ?? 0,
+      suppliersCount: parsed.suppliers?.length ?? 0,
+      buyersCount: parsed.buyers?.length ?? 0,
+    });
+
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'schedule-backup.json';
+    a.download = `${parsed.name || 'schedule'}-backup.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -443,8 +454,24 @@ export default function ExportPanel() {
     const reader = new FileReader();
     reader.onload = event => {
       try {
-        importFromJSON(event.target?.result as string);
-        alert('Data imported successfully!');
+        const json = event.target?.result as string;
+        const parsed = JSON.parse(json);
+
+        // Show what will be imported
+        const meetingsCount = parsed.meetings?.length ?? 0;
+        const suppliersCount = parsed.suppliers?.length ?? 0;
+        const buyersCount = parsed.buyers?.length ?? 0;
+
+        importFromJSON(json);
+
+        // Provide detailed feedback
+        const details = [
+          `${suppliersCount} suppliers`,
+          `${buyersCount} buyers`,
+          meetingsCount > 0 ? `${meetingsCount} scheduled meetings` : 'no scheduled meetings',
+        ].join(', ');
+
+        alert(`Data imported successfully!\n\nImported: ${details}`);
       } catch {
         alert('Failed to import data. Invalid file format.');
       }
@@ -551,11 +578,23 @@ export default function ExportPanel() {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Backup & Restore</h2>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          Export your entire configuration (suppliers, buyers, preferences, schedule) as a JSON
+          Export your entire configuration (suppliers, buyers, preferences, <strong>and schedule matrix</strong>) as a JSON
           file. Use this to transfer data between devices or keep a backup.
         </p>
 
-        <div className="flex gap-4">
+        {/* Current state summary */}
+        <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-md text-sm">
+          <p className="font-medium text-gray-700 dark:text-gray-300 mb-1">Current project contains:</p>
+          <ul className="text-gray-600 dark:text-gray-400 space-y-0.5">
+            <li>{suppliers.length} suppliers</li>
+            <li>{buyers.length} buyers</li>
+            <li className={hasSchedule ? 'text-green-600 dark:text-green-400 font-medium' : 'text-gray-500 dark:text-gray-500'}>
+              {hasSchedule ? `${meetings.length} scheduled meetings (will be included in backup)` : 'No meetings generated yet'}
+            </li>
+          </ul>
+        </div>
+
+        <div className="flex gap-4 flex-wrap">
           <button
             onClick={handleExportJSON}
             className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600"
@@ -568,6 +607,12 @@ export default function ExportPanel() {
             <input type="file" accept=".json" onChange={handleImportJSON} className="hidden" />
           </label>
         </div>
+
+        {!hasSchedule && (
+          <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+            Note: Generate a schedule first if you want to back up your meeting matrix.
+          </p>
+        )}
       </div>
 
       <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md p-4">

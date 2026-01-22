@@ -318,23 +318,34 @@ export function useFirebaseSync(options: UseFirebaseSyncOptions = {}): UseFireba
 export function useSyncProjectChanges(
   project: Project | null,
   syncStatus: SyncStatus
-): (updates: Partial<Project>) => Promise<void> {
-  const syncChanges = useCallback(async (updates: Partial<Project>) => {
+): (projectData: Project) => Promise<void> {
+  const syncChanges = useCallback(async (projectData: Project) => {
     if (!project?.isCloud || !project.shareId || syncStatus !== 'synced') {
+      console.log('[Sync] Skipping sync - not a cloud project or not synced');
       return;
     }
 
     const instances = getFirebaseInstances();
-    if (!instances) return;
+    if (!instances) {
+      console.log('[Sync] Skipping sync - Firebase not configured');
+      return;
+    }
 
     try {
-      const projectRef = doc(instances.db, 'projects', project.shareId);
-      await updateDoc(projectRef, {
-        ...updates,
-        updatedAt: serverTimestamp(),
+      console.log('[Sync] Syncing project changes to cloud:', {
+        shareId: project.shareId,
+        meetingsCount: projectData.meetings?.length ?? 0,
       });
+
+      const projectRef = doc(instances.db, 'projects', project.shareId);
+
+      // Use the full serialization to ensure Date objects are converted
+      const serializedData = projectToFirestore(projectData);
+
+      await updateDoc(projectRef, serializedData);
+      console.log('[Sync] Successfully synced to cloud');
     } catch (error) {
-      console.error('Failed to sync changes:', error);
+      console.error('[Sync] Failed to sync changes:', error);
     }
   }, [project, syncStatus]);
 

@@ -11,6 +11,7 @@ export default function ParticipantsPanel() {
     buyers,
     eventConfig,
     addSupplier,
+    updateSupplier,
     removeSupplier,
     addBuyer,
     updateBuyer,
@@ -24,6 +25,7 @@ export default function ParticipantsPanel() {
   const [showForm, setShowForm] = useState(false);
   const [showSecondary, setShowSecondary] = useState(false);
   const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null);
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Supplier form state
@@ -55,9 +57,31 @@ export default function ParticipantsPanel() {
     setBuyerEmail('');
     setShowSecondary(false);
     setShowForm(false);
+    setEditingSupplierId(null);
   };
 
-  const handleAddSupplier = () => {
+  const handleEditSupplier = (supplier: Supplier) => {
+    setEditingSupplierId(supplier.id);
+    setCompanyName(supplier.companyName);
+    setPrimaryName(supplier.primaryContact.name);
+    setPrimaryEmail(supplier.primaryContact.email || '');
+    setPrimaryTitle(supplier.primaryContact.title || '');
+    if (supplier.secondaryContact) {
+      setShowSecondary(true);
+      setSecondaryName(supplier.secondaryContact.name);
+      setSecondaryEmail(supplier.secondaryContact.email || '');
+      setSecondaryTitle(supplier.secondaryContact.title || '');
+    } else {
+      setShowSecondary(false);
+      setSecondaryName('');
+      setSecondaryEmail('');
+      setSecondaryTitle('');
+    }
+    setDuration(supplier.meetingDuration);
+    setShowForm(true);
+  };
+
+  const handleSaveSupplier = () => {
     if (!companyName || !primaryName) return;
 
     const primaryContact: ContactPerson = {
@@ -75,17 +99,28 @@ export default function ParticipantsPanel() {
           }
         : undefined;
 
-    const supplier: Supplier = {
-      id: generateId(),
-      companyName,
-      primaryContact,
-      secondaryContact,
-      meetingDuration: duration,
-      preference: 'all',
-      preferenceList: [],
-    };
+    if (editingSupplierId) {
+      // Update existing supplier (preserves ID and meeting associations)
+      updateSupplier(editingSupplierId, {
+        companyName,
+        primaryContact,
+        secondaryContact,
+        meetingDuration: duration,
+      });
+    } else {
+      // Add new supplier
+      const supplier: Supplier = {
+        id: generateId(),
+        companyName,
+        primaryContact,
+        secondaryContact,
+        meetingDuration: duration,
+        preference: 'all',
+        preferenceList: [],
+      };
+      addSupplier(supplier);
+    }
 
-    addSupplier(supplier);
     resetForm();
   };
 
@@ -236,6 +271,12 @@ export default function ParticipantsPanel() {
 
           {showForm && activeList === 'suppliers' && (
             <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-md space-y-4">
+              {editingSupplierId && (
+                <div className="flex items-center justify-between pb-2 border-b border-gray-200 dark:border-gray-600">
+                  <h3 className="font-medium text-gray-900 dark:text-gray-100">Edit Supplier</h3>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">Meetings will be preserved</span>
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -340,11 +381,11 @@ export default function ParticipantsPanel() {
 
               <div className="flex gap-2 pt-2">
                 <button
-                  onClick={handleAddSupplier}
+                  onClick={handleSaveSupplier}
                   disabled={!companyName || !primaryName}
                   className="px-4 py-2 bg-green-500 dark:bg-green-600 text-white rounded-md hover:bg-green-600 dark:hover:bg-green-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-sm"
                 >
-                  Add Supplier
+                  {editingSupplierId ? 'Save Changes' : 'Add Supplier'}
                 </button>
                 <button
                   onClick={resetForm}
@@ -444,6 +485,12 @@ export default function ParticipantsPanel() {
                         </td>
                         <td className="py-2 text-gray-900 dark:text-gray-100">{supplier.meetingDuration} min</td>
                         <td className="py-2">
+                          <button
+                            onClick={() => handleEditSupplier(supplier)}
+                            className="text-blue-500 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 mr-3"
+                          >
+                            Edit
+                          </button>
                           <button
                             onClick={() => removeSupplier(supplier.id)}
                             className="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
