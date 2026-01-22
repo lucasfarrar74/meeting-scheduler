@@ -11,15 +11,14 @@ import MobileScheduleView from './MobileScheduleView';
 import type { Meeting, Buyer } from '../types';
 import {
   DndContext,
-  DragEndEvent,
   DragOverlay,
-  DragStartEvent,
   useDraggable,
   useDroppable,
   PointerSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 
 type ViewMode = 'grid' | 'supplier' | 'buyer';
@@ -56,14 +55,12 @@ function DraggableMeeting({
   meeting,
   buyer,
   buyerColorMap,
-  isMenuOpen,
   onToggleMenu,
   children,
 }: {
   meeting: Meeting;
   buyer: Buyer;
   buyerColorMap: Map<string, string>;
-  isMenuOpen: boolean;
   onToggleMenu: () => void;
   children?: React.ReactNode;
 }) {
@@ -585,7 +582,6 @@ export default function SchedulePanel() {
                                       meeting={meeting}
                                       buyer={buyer}
                                       buyerColorMap={buyerColorMap}
-                                      isMenuOpen={activeMeetingMenu === meeting.id}
                                       onToggleMenu={() => setActiveMeetingMenu(activeMeetingMenu === meeting.id ? null : meeting.id)}
                                     >
                                       {/* Meeting action menu */}
