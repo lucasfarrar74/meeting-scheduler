@@ -16,10 +16,20 @@ import type {
   UnscheduledPair,
   Project,
   AppState,
+  ConflictCheckResult,
+  ConflictInfo,
+  ScheduleConflictsSummary,
 } from '../types';
 import { isLegacySupplier, migrateSupplier, isLegacyEventConfig, migrateEventConfig } from '../types';
 import { autoFillCancelledSlots, bumpMeetingToLaterSlot, findNextAvailableSlotAfter } from '../utils/scheduler';
 import { assignBuyerColors } from '../utils/colors';
+import {
+  checkMoveConflicts as checkMoveConflictsUtil,
+  checkAddMeetingConflicts as checkAddMeetingConflictsUtil,
+  getConflictsForMeeting,
+  getScheduleConflictsSummary,
+  isSupplierAvailableAtSlot,
+} from '../utils/conflictDetection';
 
 // Generate unique ID
 function generateId(): string {
@@ -720,6 +730,113 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     }));
   }, [updateActiveProject]);
 
+  // Add meeting manually
+  const addMeetingAction = useCallback((
+    supplierId: string,
+    buyerId: string,
+    timeSlotId: string
+  ): { success: boolean; meetingId?: string; message: string } => {
+    if (!activeProject) {
+      return { success: false, message: 'No active project' };
+    }
+
+    // Check if supplier slot is available (hard error)
+    if (!isSupplierAvailableAtSlot(supplierId, timeSlotId, activeProject.meetings)) {
+      return { success: false, message: 'Supplier already has a meeting at this time' };
+    }
+
+    saveToHistory();
+    const newMeetingId = generateId();
+
+    updateActiveProject(project => ({
+      ...project,
+      meetings: [
+        ...project.meetings,
+        {
+          id: newMeetingId,
+          supplierId,
+          buyerId,
+          timeSlotId,
+          status: 'scheduled' as const,
+        },
+      ],
+    }));
+
+    return { success: true, meetingId: newMeetingId, message: 'Meeting added successfully' };
+  }, [activeProject, saveToHistory, updateActiveProject]);
+
+  // Conflict detection functions
+  const getScheduleConflictsAction = useCallback((): ScheduleConflictsSummary => {
+    if (!activeProject) {
+      return { buyerDoubleBookings: [], preferenceViolations: [], totalConflicts: 0 };
+    }
+    return getScheduleConflictsSummary(
+      activeProject.meetings,
+      activeProject.suppliers,
+      activeProject.buyers,
+      activeProject.timeSlots
+    );
+  }, [activeProject]);
+
+  const checkMoveConflictsAction = useCallback((
+    meetingId: string,
+    targetSlotId: string
+  ): ConflictCheckResult => {
+    if (!activeProject) {
+      return { hasConflicts: false, conflicts: [], hasErrors: false, hasWarnings: false };
+    }
+
+    const meeting = activeProject.meetings.find(m => m.id === meetingId);
+    if (!meeting) {
+      return { hasConflicts: false, conflicts: [], hasErrors: false, hasWarnings: false };
+    }
+
+    return checkMoveConflictsUtil(
+      meeting,
+      targetSlotId,
+      activeProject.meetings,
+      activeProject.suppliers,
+      activeProject.buyers
+    );
+  }, [activeProject]);
+
+  const checkAddMeetingConflictsAction = useCallback((
+    supplierId: string,
+    buyerId: string,
+    slotId: string
+  ): ConflictCheckResult => {
+    if (!activeProject) {
+      return { hasConflicts: false, conflicts: [], hasErrors: false, hasWarnings: false };
+    }
+
+    return checkAddMeetingConflictsUtil(
+      supplierId,
+      buyerId,
+      slotId,
+      activeProject.meetings,
+      activeProject.suppliers,
+      activeProject.buyers
+    );
+  }, [activeProject]);
+
+  const getMeetingConflictsAction = useCallback((meetingId: string): ConflictInfo[] => {
+    if (!activeProject) {
+      return [];
+    }
+
+    const meeting = activeProject.meetings.find(m => m.id === meetingId);
+    if (!meeting) {
+      return [];
+    }
+
+    return getConflictsForMeeting(
+      meeting,
+      activeProject.meetings,
+      activeProject.suppliers,
+      activeProject.buyers
+    );
+  }, [activeProject]);
+
   // Import/Export
   const exportToJSON = useCallback((): string => {
     if (!activeProject) return '{}';
@@ -932,6 +1049,15 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     autoFillGaps,
     clearSchedule,
 
+    // New meeting management
+    addMeeting: addMeetingAction,
+
+    // Conflict detection
+    getScheduleConflicts: getScheduleConflictsAction,
+    checkMoveConflicts: checkMoveConflictsAction,
+    checkAddMeetingConflicts: checkAddMeetingConflictsAction,
+    getMeetingConflicts: getMeetingConflictsAction,
+
     // Delay handling
     markMeetingDelayed,
     markMeetingRunningLate,
@@ -989,6 +1115,11 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
     cancelMeeting,
     autoFillGaps,
     clearSchedule,
+    addMeetingAction,
+    getScheduleConflictsAction,
+    checkMoveConflictsAction,
+    checkAddMeetingConflictsAction,
+    getMeetingConflictsAction,
     markMeetingDelayed,
     markMeetingRunningLate,
     startMeeting,

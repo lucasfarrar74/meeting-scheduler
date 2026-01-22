@@ -197,6 +197,41 @@ export interface AppState {
   isGenerating: boolean;
 }
 
+// Conflict types for conflict detection
+export interface ConflictInfo {
+  type: 'supplier_busy' | 'buyer_busy' | 'preference_violation';
+  severity: 'error' | 'warning';
+  description: string;
+  affectedMeetingId?: string;
+  affectedPartyName: string;
+}
+
+export interface ConflictCheckResult {
+  hasConflicts: boolean;
+  conflicts: ConflictInfo[];
+  hasErrors: boolean;
+  hasWarnings: boolean;
+}
+
+export interface ScheduleConflictsSummary {
+  buyerDoubleBookings: Array<{
+    buyerId: string;
+    buyerName: string;
+    slotId: string;
+    slotTime: string;
+    meetingIds: string[];
+    supplierNames: string[];
+  }>;
+  preferenceViolations: Array<{
+    meetingId: string;
+    supplierId: string;
+    supplierName: string;
+    buyerId: string;
+    buyerName: string;
+  }>;
+  totalConflicts: number;
+}
+
 export interface ScheduleContextType extends ScheduleState {
   // Project management
   projects: Project[];
@@ -234,6 +269,15 @@ export interface ScheduleContextType extends ScheduleState {
   cancelMeeting: (meetingId: string) => void;
   autoFillGaps: () => void;
   clearSchedule: () => void;
+
+  // New meeting management
+  addMeeting: (supplierId: string, buyerId: string, timeSlotId: string) => { success: boolean; meetingId?: string; message: string };
+
+  // Conflict detection
+  getScheduleConflicts: () => ScheduleConflictsSummary;
+  checkMoveConflicts: (meetingId: string, targetSlotId: string) => ConflictCheckResult;
+  checkAddMeetingConflicts: (supplierId: string, buyerId: string, slotId: string) => ConflictCheckResult;
+  getMeetingConflicts: (meetingId: string) => ConflictInfo[];
 
   // Delay handling
   markMeetingDelayed: (meetingId: string, reason?: string) => void;

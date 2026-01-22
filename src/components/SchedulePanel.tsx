@@ -4,11 +4,15 @@ import { formatTime, getUniqueDatesFromSlots, formatDateReadable } from '../util
 import { createBuyerColorMap, getContrastTextColor, getLighterColor } from '../utils/colors';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import { getBuyerAvailabilityForSlot } from '../utils/conflictDetection';
 import StatusDashboard from './StatusDashboard';
 import ActivityFeed from './ActivityFeed';
 import BumpPreviewModal from './BumpPreviewModal';
 import MobileScheduleView from './MobileScheduleView';
-import type { Meeting, Buyer } from '../types';
+import ConflictSummaryPanel from './ConflictSummaryPanel';
+import ConflictWarningModal from './ConflictWarningModal';
+import AddMeetingPanel from './AddMeetingPanel';
+import type { Meeting, Buyer, ConflictInfo } from '../types';
 import {
   DndContext,
   DragOverlay,
@@ -56,12 +60,16 @@ function DraggableMeeting({
   buyer,
   buyerColorMap,
   onToggleMenu,
+  conflicts = [],
+  isHighlighted = false,
   children,
 }: {
   meeting: Meeting;
   buyer: Buyer;
   buyerColorMap: Map<string, string>;
   onToggleMenu: () => void;
+  conflicts?: ConflictInfo[];
+  isHighlighted?: boolean;
   children?: React.ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -77,9 +85,13 @@ function DraggableMeeting({
 
   const buyerColor = buyerColorMap.get(buyer.id) || '#3B82F6';
 
+  // Check for conflicts
+  const hasBuyerConflict = conflicts.some(c => c.type === 'buyer_busy');
+  const hasPreferenceViolation = conflicts.some(c => c.type === 'preference_violation');
+  const hasConflict = conflicts.length > 0;
+
   // Determine colors based on status
   let bgColor: string;
-  let textColor: string;
   let borderColor: string;
   let pulseClass = '';
   let statusIcon = '';
@@ -113,14 +125,30 @@ function DraggableMeeting({
       statusIcon = '';
   }
 
-  textColor = getContrastTextColor(bgColor);
+  const textColor = getContrastTextColor(bgColor);
+
+  // Conflict ring classes
+  let conflictRingClass = '';
+  if (isHighlighted) {
+    conflictRingClass = 'ring-4 ring-blue-500 animate-pulse';
+  } else if (hasBuyerConflict) {
+    conflictRingClass = 'ring-2 ring-red-500';
+  } else if (hasPreferenceViolation) {
+    conflictRingClass = 'ring-2 ring-amber-500';
+  }
+
+  // Build tooltip
+  let tooltipText = meeting.delayReason ? `Delay reason: ${meeting.delayReason}` : 'Drag to move';
+  if (hasConflict) {
+    tooltipText = conflicts.map(c => c.description).join('\n');
+  }
 
   return (
     <div ref={setNodeRef} style={style} className="relative">
       <div
         {...attributes}
         {...listeners}
-        className={`p-2 rounded text-xs cursor-grab active:cursor-grabbing border-l-4 ${pulseClass} ${
+        className={`p-2 rounded text-xs cursor-grab active:cursor-grabbing border-l-4 ${pulseClass} ${conflictRingClass} ${
           isDragging ? 'shadow-lg ring-2 ring-blue-400' : ''
         }`}
         style={{
@@ -135,8 +163,18 @@ function DraggableMeeting({
             onToggleMenu();
           }
         }}
-        title={meeting.delayReason ? `Delay reason: ${meeting.delayReason}` : 'Drag to move'}
+        title={tooltipText}
       >
+        {/* Conflict Badge */}
+        {hasConflict && (
+          <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
+            hasBuyerConflict
+              ? 'bg-red-500 text-white'
+              : 'bg-amber-500 text-white'
+          }`} title={conflicts.map(c => c.description).join('\n')}>
+            {hasBuyerConflict ? '!' : '!'}
+          </div>
+        )}
         <div className="flex items-center justify-between gap-1">
           <span className="font-medium">{buyer.name}</span>
           {statusIcon && <span className="text-[10px]">{statusIcon}</span>}
@@ -172,6 +210,9 @@ export default function SchedulePanel() {
     findNextAvailableSlot,
     moveMeeting,
     swapMeetings,
+    addMeeting,
+    checkMoveConflicts,
+    getMeetingConflicts,
     undo,
     redo,
     canUndo,
@@ -188,6 +229,29 @@ export default function SchedulePanel() {
     targetSlotId: string;
   } | null>(null);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+
+  // Add meeting panel state
+  const [showAddMeetingPanel, setShowAddMeetingPanel] = useState(false);
+  const [addMeetingDefaults, setAddMeetingDefaults] = useState<{
+    supplierId?: string;
+    slotId?: string;
+  }>({});
+
+  // Click-on-slot dropdown state
+  const [slotDropdown, setSlotDropdown] = useState<{
+    supplierId: string;
+    slotId: string;
+  } | null>(null);
+
+  // Conflict modal state
+  const [conflictModal, setConflictModal] = useState<{
+    title: string;
+    conflicts: ConflictInfo[];
+    onConfirm?: () => void;
+  } | null>(null);
+
+  // Highlighted meeting for conflict resolution
+  const [highlightedMeetingId, setHighlightedMeetingId] = useState<string | null>(null);
 
   // Drag and drop state
   const [activeDragMeeting, setActiveDragMeeting] = useState<Meeting | null>(null);
@@ -233,6 +297,20 @@ export default function SchedulePanel() {
   const buyerMap = useMemo(() => new Map(buyers.map(b => [b.id, b])), [buyers]);
   const supplierMap = useMemo(() => new Map(suppliers.map(s => [s.id, s])), [suppliers]);
   const buyerColorMap = useMemo(() => createBuyerColorMap(buyers), [buyers]);
+
+  // Memoized conflict map for all meetings
+  const meetingConflictMap = useMemo(() => {
+    const map = new Map<string, ConflictInfo[]>();
+    meetings.forEach(m => {
+      if (m.status !== 'cancelled' && m.status !== 'bumped') {
+        const conflicts = getMeetingConflicts(m.id);
+        if (conflicts.length > 0) {
+          map.set(m.id, conflicts);
+        }
+      }
+    });
+    return map;
+  }, [meetings, getMeetingConflicts]);
 
   const [showColorLegend, setShowColorLegend] = useState(true);
 
@@ -301,14 +379,124 @@ export default function SchedulePanel() {
 
       // Only allow dropping within the same supplier column
       if (targetSupplierId === draggedMeeting.supplierId) {
-        // Check if slot is empty
+        // Check if slot is empty for supplier
         const existingMeeting = getMeetingForSlot(targetSupplierId, targetSlotId);
         if (!existingMeeting) {
-          moveMeeting(draggedMeetingId, targetSlotId);
+          // Check for conflicts before moving
+          const conflictResult = checkMoveConflicts(draggedMeetingId, targetSlotId);
+
+          if (conflictResult.hasErrors) {
+            // Show error modal - cannot proceed
+            setConflictModal({
+              title: 'Cannot Move Meeting',
+              conflicts: conflictResult.conflicts,
+            });
+          } else if (conflictResult.hasWarnings) {
+            // Show warning but allow with confirmation
+            setConflictModal({
+              title: 'Move Meeting with Conflicts?',
+              conflicts: conflictResult.conflicts,
+              onConfirm: () => {
+                moveMeeting(draggedMeetingId, targetSlotId);
+                setConflictModal(null);
+              },
+            });
+          } else {
+            // No conflicts - move directly
+            moveMeeting(draggedMeetingId, targetSlotId);
+          }
         }
       }
     }
-  }, [meetings, swapMeetings, moveMeeting, getMeetingForSlot]);
+  }, [meetings, swapMeetings, moveMeeting, getMeetingForSlot, checkMoveConflicts]);
+
+  // Handler for clicking on empty slot
+  const handleEmptySlotClick = useCallback((supplierId: string, slotId: string) => {
+    setSlotDropdown({ supplierId, slotId });
+    setActiveMeetingMenu(null);
+  }, []);
+
+  // Handler for adding meeting from slot dropdown
+  const handleAddMeetingFromSlot = useCallback((buyerId: string) => {
+    if (!slotDropdown) return;
+
+    const { supplierId, slotId } = slotDropdown;
+
+    // Get buyer availability to check for conflicts
+    const availability = getBuyerAvailabilityForSlot(
+      buyerId,
+      supplierId,
+      slotId,
+      meetings,
+      suppliers,
+      buyers
+    );
+
+    if (availability.conflictType === 'busy' || availability.conflictType === 'preference') {
+      // Has warning conflicts - show confirmation
+      const conflicts: ConflictInfo[] = [];
+      if (availability.conflictType === 'busy') {
+        conflicts.push({
+          type: 'buyer_busy',
+          severity: 'warning',
+          description: availability.conflictDescription || 'Buyer is busy at this time',
+          affectedPartyName: buyers.find(b => b.id === buyerId)?.name || 'Buyer',
+        });
+      }
+      if (availability.conflictType === 'preference') {
+        conflicts.push({
+          type: 'preference_violation',
+          severity: 'warning',
+          description: availability.conflictDescription || 'Violates supplier preference',
+          affectedPartyName: suppliers.find(s => s.id === supplierId)?.companyName || 'Supplier',
+        });
+      }
+
+      setConflictModal({
+        title: 'Add Meeting with Conflicts?',
+        conflicts,
+        onConfirm: () => {
+          addMeeting(supplierId, buyerId, slotId);
+          setConflictModal(null);
+          setSlotDropdown(null);
+        },
+      });
+    } else {
+      // No conflicts - add directly
+      addMeeting(supplierId, buyerId, slotId);
+      setSlotDropdown(null);
+    }
+  }, [slotDropdown, meetings, suppliers, buyers, addMeeting]);
+
+  // Get buyer availability for slot dropdown
+  const slotDropdownBuyers = useMemo(() => {
+    if (!slotDropdown) return [];
+
+    return buyers.map(buyer => {
+      const availability = getBuyerAvailabilityForSlot(
+        buyer.id,
+        slotDropdown.supplierId,
+        slotDropdown.slotId,
+        meetings,
+        suppliers,
+        buyers
+      );
+      return { buyer, ...availability };
+    });
+  }, [slotDropdown, buyers, meetings, suppliers]);
+
+  // Handler for highlighting meeting (from conflict panel)
+  const handleHighlightMeeting = useCallback((meetingId: string) => {
+    setHighlightedMeetingId(meetingId);
+    // Clear highlight after a few seconds
+    setTimeout(() => setHighlightedMeetingId(null), 3000);
+  }, []);
+
+  // Close slot dropdown when clicking outside
+  const handleClickOutside = useCallback(() => {
+    setSlotDropdown(null);
+    setActiveMeetingMenu(null);
+  }, []);
 
   if (!eventConfig) {
     return (
@@ -360,6 +548,15 @@ export default function SchedulePanel() {
                     Auto-fill Gaps ({cancelledCount})
                   </button>
                 )}
+                <button
+                  onClick={() => {
+                    setAddMeetingDefaults({});
+                    setShowAddMeetingPanel(true);
+                  }}
+                  className="px-4 py-2 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded-md hover:bg-purple-200 dark:hover:bg-purple-900/50"
+                >
+                  + Add Meeting
+                </button>
                 {/* Undo/Redo buttons */}
                 <div className="flex gap-1 border-l border-gray-300 dark:border-gray-600 pl-2 ml-1">
                   <button
@@ -582,6 +779,8 @@ export default function SchedulePanel() {
                                       meeting={meeting}
                                       buyer={buyer}
                                       buyerColorMap={buyerColorMap}
+                                      conflicts={meetingConflictMap.get(meeting.id) || []}
+                                      isHighlighted={highlightedMeetingId === meeting.id}
                                       onToggleMenu={() => setActiveMeetingMenu(activeMeetingMenu === meeting.id ? null : meeting.id)}
                                     >
                                       {/* Meeting action menu */}
@@ -704,7 +903,62 @@ export default function SchedulePanel() {
                                       )}
                                     </DraggableMeeting>
                                   ) : (
-                                    <span className="text-gray-300 dark:text-gray-600">-</span>
+                                    <div className="relative">
+                                      <button
+                                        onClick={() => handleEmptySlotClick(supplier.id, slot.id)}
+                                        className="w-full h-8 flex items-center justify-center text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded transition-colors"
+                                        title="Click to add meeting"
+                                      >
+                                        <span className="group-hover:hidden">-</span>
+                                        <span className="hidden group-hover:inline text-xs">+ Add</span>
+                                      </button>
+
+                                      {/* Slot dropdown for adding meetings */}
+                                      {slotDropdown?.supplierId === supplier.id && slotDropdown?.slotId === slot.id && (
+                                        <div className="absolute z-20 top-full left-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-48 max-h-64 overflow-y-auto">
+                                          <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+                                            <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Add Meeting</p>
+                                          </div>
+                                          {slotDropdownBuyers.map(({ buyer: b, conflictType, conflictDescription }) => (
+                                            <button
+                                              key={b.id}
+                                              onClick={() => handleAddMeetingFromSlot(b.id)}
+                                              className={`w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 ${
+                                                conflictType === 'busy' ? 'opacity-75' : ''
+                                              }`}
+                                            >
+                                              {conflictType === 'none' && (
+                                                <span className="text-green-500 flex-shrink-0">&#10003;</span>
+                                              )}
+                                              {conflictType === 'busy' && (
+                                                <span className="text-red-500 flex-shrink-0">!</span>
+                                              )}
+                                              {conflictType === 'preference' && (
+                                                <span className="text-amber-500 flex-shrink-0">!</span>
+                                              )}
+                                              <div className="flex-1 min-w-0">
+                                                <div className="text-gray-900 dark:text-gray-100 truncate">{b.name}</div>
+                                                {conflictDescription && (
+                                                  <div className={`text-[10px] truncate ${
+                                                    conflictType === 'busy' ? 'text-red-500' : 'text-amber-500'
+                                                  }`}>
+                                                    {conflictDescription}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </button>
+                                          ))}
+                                          <div className="border-t border-gray-200 dark:border-gray-700">
+                                            <button
+                                              onClick={() => setSlotDropdown(null)}
+                                              className="w-full px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700"
+                                            >
+                                              Cancel
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
                                   )}
                                 </DroppableSlot>
                               );
@@ -806,6 +1060,7 @@ export default function SchedulePanel() {
           {/* Status Sidebar - hidden on mobile */}
           {showSidebar && !isMobile && (
             <div className="w-80 flex-shrink-0 space-y-4">
+              <ConflictSummaryPanel onHighlightMeeting={handleHighlightMeeting} />
               <StatusDashboard />
               <ActivityFeed />
             </div>
@@ -840,6 +1095,35 @@ export default function SchedulePanel() {
           />
         );
       })()}
+
+      {/* Add Meeting Panel */}
+      {showAddMeetingPanel && (
+        <AddMeetingPanel
+          onClose={() => setShowAddMeetingPanel(false)}
+          defaultSupplierId={addMeetingDefaults.supplierId}
+          defaultSlotId={addMeetingDefaults.slotId}
+        />
+      )}
+
+      {/* Conflict Warning Modal */}
+      {conflictModal && (
+        <ConflictWarningModal
+          title={conflictModal.title}
+          conflicts={conflictModal.conflicts}
+          onClose={() => setConflictModal(null)}
+          onConfirm={conflictModal.onConfirm}
+          showConfirm={!!conflictModal.onConfirm}
+          confirmText="Proceed Anyway"
+        />
+      )}
+
+      {/* Click outside overlay to close dropdowns */}
+      {(slotDropdown || activeMeetingMenu) && (
+        <div
+          className="fixed inset-0 z-10"
+          onClick={handleClickOutside}
+        />
+      )}
     </div>
   );
 }
