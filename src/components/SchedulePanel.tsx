@@ -260,6 +260,9 @@ export default function SchedulePanel() {
     targetDate: string;
   } | null>(null);
 
+  // Show open slots highlighting
+  const [showOpenSlots, setShowOpenSlots] = useState(false);
+
   // Ref for highlight timeout to prevent stale closures
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -575,6 +578,17 @@ export default function SchedulePanel() {
                 >
                   + Add Meeting
                 </button>
+                <button
+                  onClick={() => setShowOpenSlots(!showOpenSlots)}
+                  className={`px-4 py-2 rounded-md ${
+                    showOpenSlots
+                      ? 'bg-green-500 text-white hover:bg-green-600'
+                      : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50'
+                  }`}
+                  title="Highlight all available time slots"
+                >
+                  {showOpenSlots ? '● Hide Open Slots' : '○ Show Open Slots'}
+                </button>
                 {/* Undo/Redo buttons */}
                 <div className="flex gap-1 border-l border-gray-300 dark:border-gray-600 pl-2 ml-1">
                   <button
@@ -803,7 +817,11 @@ export default function SchedulePanel() {
                                     >
                                       {/* Meeting action menu */}
                                       {activeMeetingMenu === meeting.id && (
-                                        <div className="absolute z-10 mt-1 left-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-40">
+                                        <div
+                                          className="absolute z-30 mt-1 left-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-40"
+                                          onPointerDown={(e) => e.stopPropagation()}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
                                           {meeting.status === 'scheduled' && (
                                             <button
                                               onClick={() => { startMeeting(meeting.id); setActiveMeetingMenu(null); }}
@@ -896,7 +914,11 @@ export default function SchedulePanel() {
                                       )}
                                       {/* Delay reason input */}
                                       {delayReasonInput === meeting.id && (
-                                        <div className="absolute z-20 mt-1 left-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg p-3 min-w-48">
+                                        <div
+                                          className="absolute z-30 mt-1 left-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg p-3 min-w-48"
+                                          onPointerDown={(e) => e.stopPropagation()}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
                                           <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Reason for delay:</p>
                                           <input
                                             type="text"
@@ -947,16 +969,30 @@ export default function SchedulePanel() {
                                     <div className="relative">
                                       <button
                                         onClick={() => handleEmptySlotClick(supplier.id, slot.id)}
-                                        className="w-full h-8 flex items-center justify-center text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded transition-colors"
+                                        className={`w-full h-8 flex items-center justify-center rounded transition-colors ${
+                                          showOpenSlots
+                                            ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 border-2 border-dashed border-green-400 dark:border-green-600 hover:bg-green-200 dark:hover:bg-green-900/50'
+                                            : 'text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                                        }`}
                                         title="Click to add meeting"
                                       >
-                                        <span className="group-hover:hidden">-</span>
-                                        <span className="hidden group-hover:inline text-xs">+ Add</span>
+                                        {showOpenSlots ? (
+                                          <span className="text-xs font-medium">+ Open</span>
+                                        ) : (
+                                          <>
+                                            <span className="group-hover:hidden">-</span>
+                                            <span className="hidden group-hover:inline text-xs">+ Add</span>
+                                          </>
+                                        )}
                                       </button>
 
                                       {/* Slot dropdown for adding meetings */}
                                       {slotDropdown?.supplierId === supplier.id && slotDropdown?.slotId === slot.id && (
-                                        <div className="absolute z-20 top-full left-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-48 max-h-64 overflow-y-auto">
+                                        <div
+                                          className="absolute z-30 top-full left-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-48 max-h-64 overflow-y-auto"
+                                          onPointerDown={(e) => e.stopPropagation()}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
                                           <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
                                             <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Add Meeting</p>
                                           </div>
