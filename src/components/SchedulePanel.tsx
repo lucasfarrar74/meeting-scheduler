@@ -263,6 +263,9 @@ export default function SchedulePanel() {
   // Show open slots highlighting
   const [showOpenSlots, setShowOpenSlots] = useState(false);
 
+  // Track which meeting is being moved for contextual slot highlighting
+  const [movingMeetingId, setMovingMeetingId] = useState<string | null>(null);
+
   // Ref for highlight timeout to prevent stale closures
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -338,6 +341,47 @@ export default function SchedulePanel() {
     [timeSlots, currentDay, isMultiDay]
   );
 
+  // Calculate slot availability when moving a specific meeting
+  const movingMeetingSlotStatus = useMemo(() => {
+    if (!movingMeetingId) return null;
+
+    const meeting = meetings.find(m => m.id === movingMeetingId);
+    if (!meeting) return null;
+
+    const statusMap = new Map<string, 'free' | 'warning' | 'blocked'>();
+
+    for (const slot of dayTimeSlots) {
+      if (slot.isBreak) continue;
+
+      // Check if supplier is busy at this slot (excluding the meeting being moved)
+      const supplierBusy = meetings.some(m =>
+        m.supplierId === meeting.supplierId &&
+        m.timeSlotId === slot.id &&
+        m.status !== 'cancelled' &&
+        m.status !== 'bumped' &&
+        m.id !== movingMeetingId
+      );
+
+      if (supplierBusy) {
+        statusMap.set(slot.id, 'blocked');
+        continue;
+      }
+
+      // Check if buyer is busy at this slot (excluding the meeting being moved)
+      const buyerBusy = meetings.some(m =>
+        m.buyerId === meeting.buyerId &&
+        m.timeSlotId === slot.id &&
+        m.status !== 'cancelled' &&
+        m.status !== 'bumped' &&
+        m.id !== movingMeetingId
+      );
+
+      statusMap.set(slot.id, buyerBusy ? 'warning' : 'free');
+    }
+
+    return { meeting, statusMap };
+  }, [movingMeetingId, meetings, dayTimeSlots]);
+
   // Memoized filtered arrays
   const meetingSlots = useMemo(() => dayTimeSlots.filter(s => !s.isBreak), [dayTimeSlots]);
   const cancelledCount = useMemo(() => meetings.filter(m => m.status === 'cancelled').length, [meetings]);
@@ -359,6 +403,7 @@ export default function SchedulePanel() {
     const meeting = meetings.find(m => m.id === meetingId);
     if (meeting) {
       setActiveDragMeeting(meeting);
+      setMovingMeetingId(meetingId); // Set context for slot highlighting
       setActiveMeetingMenu(null); // Close any open menus
     }
   }, [meetings]);
@@ -366,6 +411,7 @@ export default function SchedulePanel() {
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     setActiveDragMeeting(null);
+    setMovingMeetingId(null); // Clear context for slot highlighting
 
     if (!over) return;
 
@@ -965,19 +1011,33 @@ export default function SchedulePanel() {
                                         </div>
                                       )}
                                     </DraggableMeeting>
-                                  ) : (
+                                  ) : (() => {
+                                    // Check if we're moving a meeting and if this slot is for the same supplier
+                                    const isMovingContext = !!movingMeetingId && movingMeetingSlotStatus?.meeting.supplierId === supplier.id;
+                                    const slotStatus = isMovingContext ? movingMeetingSlotStatus?.statusMap.get(slot.id) : null;
+                                    const showSlotHighlight = showOpenSlots || isMovingContext;
+
+                                    return (
                                     <div className="relative">
                                       <button
                                         onClick={() => handleEmptySlotClick(supplier.id, slot.id)}
                                         className={`w-full h-8 flex items-center justify-center rounded transition-colors ${
-                                          showOpenSlots
+                                          isMovingContext && slotStatus === 'blocked'
+                                            ? 'bg-red-100 dark:bg-red-900/20 text-red-400 dark:text-red-500 cursor-not-allowed'
+                                            : isMovingContext && slotStatus === 'warning'
+                                            ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border-2 border-dashed border-amber-400 dark:border-amber-600 hover:bg-amber-200 dark:hover:bg-amber-900/50'
+                                            : showSlotHighlight && (!isMovingContext || slotStatus === 'free')
                                             ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 border-2 border-dashed border-green-400 dark:border-green-600 hover:bg-green-200 dark:hover:bg-green-900/50'
                                             : 'text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                                         }`}
-                                        title="Click to add meeting"
+                                        title={isMovingContext && slotStatus === 'blocked' ? 'Supplier busy at this time' : isMovingContext && slotStatus === 'warning' ? 'Buyer has another meeting' : 'Click to add meeting'}
                                       >
-                                        {showOpenSlots ? (
-                                          <span className="text-xs font-medium">+ Open</span>
+                                        {isMovingContext && slotStatus === 'blocked' ? (
+                                          <span className="text-xs">✕</span>
+                                        ) : isMovingContext && slotStatus === 'warning' ? (
+                                          <span className="text-xs font-medium">! Busy</span>
+                                        ) : showSlotHighlight ? (
+                                          <span className="text-xs font-medium">✓ Free</span>
                                         ) : (
                                           <>
                                             <span className="group-hover:hidden">-</span>
@@ -1036,7 +1096,8 @@ export default function SchedulePanel() {
                                         </div>
                                       )}
                                     </div>
-                                  )}
+                                    );
+                                  })()}
                                 </DroppableSlot>
                               );
                             })
