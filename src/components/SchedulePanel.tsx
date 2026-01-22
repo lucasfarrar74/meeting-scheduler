@@ -266,6 +266,9 @@ export default function SchedulePanel() {
   // Track which meeting is being moved for contextual slot highlighting
   const [movingMeetingId, setMovingMeetingId] = useState<string | null>(null);
 
+  // Move to Day submenu state
+  const [showMoveToDayMenu, setShowMoveToDayMenu] = useState(false);
+
   // Ref for highlight timeout to prevent stale closures
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -563,6 +566,7 @@ export default function SchedulePanel() {
   const handleClickOutside = useCallback(() => {
     setSlotDropdown(null);
     setActiveMeetingMenu(null);
+    setShowMoveToDayMenu(false);
   }, []);
 
   if (!eventConfig) {
@@ -920,25 +924,35 @@ export default function SchedulePanel() {
                                             )}
                                             {/* Move to Day submenu - only show for multi-day events */}
                                             {isMultiDay && (
-                                              <div className="relative group/moveday">
-                                                <button className="w-full px-3 py-2 text-left text-xs hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-400 flex items-center justify-between">
+                                              <div className="relative">
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setShowMoveToDayMenu(!showMoveToDayMenu);
+                                                  }}
+                                                  className="w-full px-3 py-2 text-left text-xs hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-400 flex items-center justify-between"
+                                                >
                                                   <span>📅 Move to Day</span>
-                                                  <span className="text-[10px]">▶</span>
+                                                  <span className={`text-[10px] transition-transform ${showMoveToDayMenu ? 'rotate-90' : ''}`}>▶</span>
                                                 </button>
-                                                <div className="absolute left-full top-0 ml-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg hidden group-hover/moveday:block min-w-32 z-20">
-                                                  {eventDates.filter(d => d !== currentDay).map((date) => (
-                                                    <button
-                                                      key={date}
-                                                      onClick={() => {
-                                                        setCrossDayMove({ meetingId: meeting.id, targetDate: date });
-                                                        setActiveMeetingMenu(null);
-                                                      }}
-                                                      className="w-full px-3 py-2 text-left text-xs hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-400"
-                                                    >
-                                                      Day {eventDates.indexOf(date) + 1} ({formatDateReadable(date)})
-                                                    </button>
-                                                  ))}
-                                                </div>
+                                                {showMoveToDayMenu && (
+                                                  <div className="absolute left-full top-0 ml-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-32 z-40">
+                                                    {eventDates.filter(d => d !== currentDay).map((date) => (
+                                                      <button
+                                                        key={date}
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setCrossDayMove({ meetingId: meeting.id, targetDate: date });
+                                                          setActiveMeetingMenu(null);
+                                                          setShowMoveToDayMenu(false);
+                                                        }}
+                                                        className="w-full px-3 py-2 text-left text-xs hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-400"
+                                                      >
+                                                        Day {eventDates.indexOf(date) + 1} ({formatDateReadable(date)})
+                                                      </button>
+                                                    ))}
+                                                  </div>
+                                                )}
                                               </div>
                                             )}
                                           </div>
