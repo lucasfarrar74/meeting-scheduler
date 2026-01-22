@@ -97,7 +97,11 @@ export function useFirebaseSync(options: UseFirebaseSyncOptions = {}): UseFireba
   // Initialize auth on mount
   useEffect(() => {
     if (isEnabled) {
-      signInAnonymouslyIfNeeded();
+      signInAnonymouslyIfNeeded().then((userId) => {
+        if (!userId) {
+          console.warn('Firebase auth failed - cloud sync may not work');
+        }
+      });
     }
   }, [isEnabled]);
 
@@ -252,8 +256,18 @@ export function useFirebaseSync(options: UseFirebaseSyncOptions = {}): UseFireba
 
     // Update our presence
     const updatePresence = async () => {
-      const userId = getCurrentUserId();
-      if (!userId || !project.shareId) return;
+      let userId = getCurrentUserId();
+
+      // Try to authenticate if we don't have a user ID
+      if (!userId) {
+        userId = await signInAnonymouslyIfNeeded();
+      }
+
+      if (!userId || !project.shareId) {
+        // Auth failed - don't set error status as it would be confusing
+        // The user can still work locally, sync just won't show collaborators
+        return;
+      }
 
       try {
         const presenceDocRef = doc(instances.db, 'projects', project.shareId, 'presence', userId);
