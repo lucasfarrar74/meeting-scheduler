@@ -142,6 +142,10 @@ export interface Project {
   ownerId?: string;            // Firebase user ID of owner
   collaborators?: string[];    // User IDs with access
   shareId?: string;            // Short ID for sharing links
+
+  // Integration with CDFA Project Manager
+  cdfaActivityId?: string;     // Link back to Project Manager activity
+  fiscalYear?: string;         // Fiscal year for budget alignment (e.g., "FY2025-26")
 }
 
 // Sync status for cloud projects
@@ -237,7 +241,7 @@ export interface ScheduleContextType extends ScheduleState {
   projects: Project[];
   activeProjectId: string | null;
   activeProject: Project | null;
-  createProject: (name: string) => Project;
+  createProject: (name: string, options?: { cdfaActivityId?: string; fiscalYear?: string }) => Project;
   switchProject: (projectId: string) => void;
   deleteProject: (projectId: string) => void;
   duplicateProject: (projectId: string) => Project;

@@ -376,8 +376,15 @@ export function ScheduleProvider({ children }: { children: ReactNode }) {
   }, [appState.activeProjectId, historyTracker]);
 
   // Project management
-  const createProject = useCallback((name: string): Project => {
+  const createProject = useCallback((name: string, options?: { cdfaActivityId?: string; fiscalYear?: string }): Project => {
     const newProject = createEmptyProject(name);
+    // Add CDFA integration fields if provided
+    if (options?.cdfaActivityId) {
+      newProject.cdfaActivityId = options.cdfaActivityId;
+    }
+    if (options?.fiscalYear) {
+      newProject.fiscalYear = options.fiscalYear;
+    }
     setAppState(prev => ({
       ...prev,
       projects: [...prev.projects, newProject],

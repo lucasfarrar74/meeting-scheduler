@@ -17,7 +17,7 @@ type Tab = 'config' | 'participants' | 'preferences' | 'schedule' | 'export';
 function AppContent() {
   const [activeTab, setActiveTab] = useState<Tab>('config');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { activeProject, openCloudProject, isFirebaseEnabled } = useSchedule();
+  const { activeProject, openCloudProject, isFirebaseEnabled, createProject, setEventConfig } = useSchedule();
 
   // Handle share URL parameter on load
   useEffect(() => {
@@ -33,6 +33,39 @@ function AppContent() {
       });
     }
   }, [isFirebaseEnabled, openCloudProject]);
+
+  // Handle fromActivity URL parameter - create linked project from Project Manager
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const fromActivity = urlParams.get('fromActivity');
+    const activityName = urlParams.get('activityName');
+    const startDate = urlParams.get('startDate');
+    const endDate = urlParams.get('endDate');
+
+    if (fromActivity && activityName) {
+      // Create a new project linked to the Project Manager activity
+      const newProject = createProject(activityName, { cdfaActivityId: fromActivity });
+
+      // Store the activity link in the project (will be persisted via context)
+      if (newProject) {
+        // Set default event config with dates from the activity
+        setEventConfig({
+          id: crypto.randomUUID(),
+          name: activityName,
+          startDate: startDate || new Date().toISOString().split('T')[0],
+          endDate: endDate || startDate || new Date().toISOString().split('T')[0],
+          startTime: '09:00',
+          endTime: '17:00',
+          defaultMeetingDuration: 30,
+          breaks: [],
+          schedulingStrategy: 'efficient',
+        });
+      }
+
+      // Clear the URL parameters after processing
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [createProject, setEventConfig]);
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'config', label: 'Event Setup' },
@@ -60,6 +93,19 @@ function AppContent() {
                 <p className="text-sm text-gray-600 dark:text-gray-400">Supplier-Buyer Meeting Organizer</p>
               </div>
               <div className="flex items-center gap-4">
+                {activeProject?.cdfaActivityId && (
+                  <a
+                    href={`https://cdfa-project-manager.vercel.app/?activityId=${activeProject.cdfaActivityId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    </svg>
+                    Project Manager
+                  </a>
+                )}
                 <ThemeToggle />
                 <KeyboardShortcutsHelp />
                 <NotificationSettings />
