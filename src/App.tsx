@@ -13,6 +13,7 @@ import NotificationSettings from './components/NotificationSettings';
 import ThemeToggle from './components/ThemeToggle';
 import { initializeImportBridge } from './services/importBridge';
 import { initializeProjectBridge } from './services/projectBridge';
+import { initializeBackupBridge } from './services/backupBridge';
 import './index.css';
 
 type Tab = 'config' | 'participants' | 'preferences' | 'schedule' | 'export';
@@ -41,6 +42,12 @@ function AppContent() {
     );
     return cleanup;
   }, [createProject, setEventConfig]);
+
+  // Initialize backup bridge for CDFA Hub backup/restore
+  useEffect(() => {
+    const cleanup = initializeBackupBridge();
+    return cleanup;
+  }, []);
 
   // Handle share URL parameter on load
   useEffect(() => {
