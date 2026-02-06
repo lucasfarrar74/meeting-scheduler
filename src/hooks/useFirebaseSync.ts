@@ -15,7 +15,6 @@ import {
   isFirebaseConfigured,
   signInAnonymouslyIfNeeded,
   getEffectiveUserId,
-  setOverrideUserId,
 } from '../lib/firebase';
 import type { Project, SyncStatus, ActiveCollaborator } from '../types';
 
