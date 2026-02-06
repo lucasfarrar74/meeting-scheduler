@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { AuthProvider } from './context/AuthContext';
 import { ScheduleProvider, useSchedule } from './context/ScheduleContext';
 import EventConfigPanel from './components/EventConfigPanel';
 import ParticipantsPanel from './components/ParticipantsPanel';
@@ -10,6 +11,8 @@ import SyncStatusIndicator from './components/SyncStatusIndicator';
 import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp';
 import NotificationSettings from './components/NotificationSettings';
 import ThemeToggle from './components/ThemeToggle';
+import { initializeImportBridge } from './services/importBridge';
+import { initializeProjectBridge } from './services/projectBridge';
 import './index.css';
 
 type Tab = 'config' | 'participants' | 'preferences' | 'schedule' | 'export';
@@ -17,7 +20,27 @@ type Tab = 'config' | 'participants' | 'preferences' | 'schedule' | 'export';
 function AppContent() {
   const [activeTab, setActiveTab] = useState<Tab>('config');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { activeProject, openCloudProject, isFirebaseEnabled, createProject, setEventConfig } = useSchedule();
+  const { activeProject, openCloudProject, isFirebaseEnabled, createProject, setEventConfig, importSuppliers } = useSchedule();
+
+  // Initialize import bridge for CDFA Hub communication
+  useEffect(() => {
+    const cleanup = initializeImportBridge((suppliers) => {
+      importSuppliers(suppliers);
+    });
+    return cleanup;
+  }, [importSuppliers]);
+
+  // Initialize project bridge for CDFA Hub project creation
+  useEffect(() => {
+    const cleanup = initializeProjectBridge(
+      (name, options) => {
+        const project = createProject(name, options);
+        return project ? { id: project.id, shareId: project.shareId } : undefined;
+      },
+      setEventConfig
+    );
+    return cleanup;
+  }, [createProject, setEventConfig]);
 
   // Handle share URL parameter on load
   useEffect(() => {
@@ -157,9 +180,11 @@ function AppContent() {
 
 function App() {
   return (
-    <ScheduleProvider>
-      <AppContent />
-    </ScheduleProvider>
+    <AuthProvider>
+      <ScheduleProvider>
+        <AppContent />
+      </ScheduleProvider>
+    </AuthProvider>
   );
 }
 

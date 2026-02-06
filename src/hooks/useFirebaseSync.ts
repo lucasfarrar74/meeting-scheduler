@@ -14,7 +14,8 @@ import {
   getFirebaseInstances,
   isFirebaseConfigured,
   signInAnonymouslyIfNeeded,
-  getCurrentUserId,
+  getEffectiveUserId,
+  setOverrideUserId,
 } from '../lib/firebase';
 import type { Project, SyncStatus, ActiveCollaborator } from '../types';
 
@@ -94,16 +95,7 @@ export function useFirebaseSync(options: UseFirebaseSyncOptions = {}): UseFireba
   const currentProjectIdRef = useRef<string | null>(null);
   const lastLocalUpdateRef = useRef<string | null>(null);
 
-  // Initialize auth on mount
-  useEffect(() => {
-    if (isEnabled) {
-      signInAnonymouslyIfNeeded().then((userId) => {
-        if (!userId) {
-          console.warn('Firebase auth failed - cloud sync may not work');
-        }
-      });
-    }
-  }, [isEnabled]);
+  // Note: Auth is now handled by AuthContext which will call setOverrideUserId
 
   // Cleanup on unmount
   useEffect(() => {
@@ -256,7 +248,7 @@ export function useFirebaseSync(options: UseFirebaseSyncOptions = {}): UseFireba
 
     // Update our presence
     const updatePresence = async () => {
-      let userId = getCurrentUserId();
+      let userId = getEffectiveUserId();
 
       // Try to authenticate if we don't have a user ID
       if (!userId) {
